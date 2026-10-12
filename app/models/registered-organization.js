@@ -1,0 +1,130 @@
+import {
+  OcmwAssociationCodeList,
+  PrivateOcmwAssociationCodeList,
+  AndereCodeList,
+  ZorgraadCodeList,
+  RegionaalZorgplatformCodeList,
+  RegionaalLandschapCodeList,
+  BosgroepCodeList,
+  WoonmaatschappijCodeList,
+} from '../constants/classification';
+import Joi from 'joi';
+import {
+  validateHasManyNotEmptyRequired,
+  validateHasManyOptional,
+  validateBelongsToOptional,
+  validateBelongsToRequired,
+} from '../validators/schema';
+import { CLASSIFICATION } from './administrative-unit-classification-code';
+import OrganizationModel from './organization';
+import { belongsTo } from '@warp-drive/legacy/model';
+
+export default class RegisteredOrganizationModel extends OrganizationModel {
+  // Werkingsgebied (dct:spatial on registered organizations). User-entered.
+  @belongsTo('location', {
+    inverse: null,
+    async: true,
+  })
+  scope;
+
+  get validationSchema() {
+    const REQUIRED_MESSAGE = 'Selecteer een optie';
+    return super.validationSchema.append({
+      // Werkingsgebied: required for the new types that have one, optional for the rest.
+      scope: Joi.when('classification.id', {
+        is: Joi.exist().valid(
+          ...ZorgraadCodeList,
+          ...RegionaalZorgplatformCodeList,
+          ...RegionaalLandschapCodeList,
+          ...BosgroepCodeList,
+          ...WoonmaatschappijCodeList,
+          ...PrivateOcmwAssociationCodeList,
+        ),
+        then: validateBelongsToRequired(REQUIRED_MESSAGE),
+        otherwise: validateBelongsToOptional(),
+      }),
+      // NOTE: The requested functionality was to *not* validate memberships of
+      // already existing organizations.
+      // 1. For existing organizations: memberships are not validated (optional).
+      // 2. For new organizations:
+      //    a. 'Vennootschappen' and 'Verenigingen' (corporations and associations):
+      //       memberships are optional.
+      //    b. All other types: memberships are mandatory.
+      // The creatingNewOrganization flag (set to true) triggers validation for new organizations.'
+      memberships: Joi.when(Joi.ref('$creatingNewOrganization'), {
+        is: Joi.exist().valid(true),
+        then: Joi.when('classification.id', {
+          is: Joi.exist().valid(
+            ...AndereCodeList,
+            ...ZorgraadCodeList,
+            ...RegionaalZorgplatformCodeList,
+            ...RegionaalLandschapCodeList,
+            ...BosgroepCodeList,
+            ...WoonmaatschappijCodeList,
+          ),
+          then: validateHasManyOptional(),
+          otherwise: validateHasManyNotEmptyRequired(REQUIRED_MESSAGE),
+        }),
+        otherwise: validateHasManyOptional(),
+      }),
+    });
+  }
+
+  get isOcmwAssociation() {
+    return this._hasClassificationId(OcmwAssociationCodeList);
+  }
+
+  get displayRegion() {
+    return this.isOcmwAssociation;
+  }
+
+  get isPrivateOcmwAssociation() {
+    return this._hasClassificationId(PrivateOcmwAssociationCodeList);
+  }
+
+  get isAndere() {
+    return this._hasClassificationId(AndereCodeList);
+  }
+
+  get isZorgraad() {
+    return this._hasClassificationId(ZorgraadCodeList);
+  }
+
+  get isRegionaalZorgplatform() {
+    return this._hasClassificationId(RegionaalZorgplatformCodeList);
+  }
+
+  get isRegionaalLandschap() {
+    return this._hasClassificationId(RegionaalLandschapCodeList);
+  }
+
+  get isBosgroep() {
+    return this._hasClassificationId(BosgroepCodeList);
+  }
+
+  get isWoonmaatschappij() {
+    return this._hasClassificationId(WoonmaatschappijCodeList);
+  }
+
+  get participantClassifications() {
+    if (this.isOcmwAssociation) {
+      return OcmwAssociationCodeList.concat([
+        CLASSIFICATION.MUNICIPALITY.id,
+        CLASSIFICATION.OCMW.id,
+        CLASSIFICATION.ANDERE.id,
+      ]);
+    }
+    return [];
+  }
+
+  get founderClassifications() {
+    if (this.isOcmwAssociation) {
+      return OcmwAssociationCodeList.concat([
+        CLASSIFICATION.MUNICIPALITY.id,
+        CLASSIFICATION.OCMW.id,
+        CLASSIFICATION.ANDERE.id,
+      ]);
+    }
+    return [];
+  }
+}

@@ -1,0 +1,270 @@
+import Service, { service } from '@ember/service';
+import { tracked } from '@glimmer/tracking';
+import {
+  findRecord,
+  query as queryBuilder,
+} from '@warp-drive/legacy/compat/builders';
+
+const PRIVACY_CENTRIC_SERVICE_ENDPOINT = {
+  REQUEST: '/person-information-requests',
+  UPDATE: '/person-information-updates',
+  ASK: '/person-information-ask',
+  VALIDATE_SSN: '/person-information-validate-ssn',
+};
+
+const STORAGE = new Map();
+
+export default class SensitivePersonalInformationService extends Service {
+  @service store;
+  @service currentSession;
+
+  hasStoredSensitiveInformation(person) {
+    return STORAGE.has(person.id);
+  }
+
+  getStoredSensitiveInformation(person) {
+    const sensitiveInfo = STORAGE.get(person.id);
+    if (sensitiveInfo) {
+      return new SensitivePersonalInformation(sensitiveInfo);
+    }
+    return null;
+  }
+
+  getEndpoint(suffix) {
+    if (this.currentSession.hasWorshipRole) {
+      return '/worship' + suffix;
+    } else {
+      return suffix;
+    }
+  }
+  /**
+   * Check what sensitive data are present for a person
+   * @param {PersonModel} person
+   */
+  async askInformation(person) {
+    const askEndpoint = `${this.getEndpoint(
+      PRIVACY_CENTRIC_SERVICE_ENDPOINT.ASK,
+    )}/${person.id}`;
+    let response = await this._request(askEndpoint, {});
+    let data = await response.json();
+    return await this.mapSensitivePersonalInformation(data?.data, true);
+  }
+
+  /**
+   * Check if ssn is valid
+   * @param {PersonModel} person
+   * @param {String} ssn
+   */
+  async validateSsn(person, ssn) {
+    let validSsn = false;
+    let sensitiveInformationError = null;
+    if (!ssn || ssn?.length === 0) {
+      validSsn = true;
+    } else if (!/^[0-9]{2}[0-9]{2}[0-9]{2}[0-9]{3}[0-9]{2}$/.test(ssn)) {
+      sensitiveInformationError =
+        'Vul het (elfcijferige) Rijksregisternummer in.';
+    } else {
+      const validateSsnEndpoint = `${this.getEndpoint(
+        PRIVACY_CENTRIC_SERVICE_ENDPOINT.VALIDATE_SSN,
+      )}/${person.id}?ssn=${ssn}`;
+      let response = await this._request(validateSsnEndpoint, {});
+      let data = await response.json();
+      validSsn = data?.data?.attributes['is-valid'];
+      if (!validSsn) {
+        sensitiveInformationError =
+          'Dit rijksregisternummer behoort al tot een persoon. Als je denkt dat er een fout is, meld het ons.';
+      }
+    }
+    return { validSsn, sensitiveInformationError };
+  }
+
+  /**
+   * Request sensitive information from a specific person
+   *
+   * @param {PersonModel} person
+   * @param {RequestReasonModel} requestReason
+   * @returns {Promise<SensitivePersonalInformation>}
+   */
+  async getInformation(person, requestReason) {
+    let body = {
+      data: {
+        type: 'person-information-requests',
+        relationships: {
+          person: {
+            data: {
+              type: 'people',
+              id: person.id,
+            },
+          },
+          reason: {
+            data: {
+              type: 'request-reasons',
+              id: requestReason.id,
+            },
+          },
+        },
+      },
+    };
+
+    let response = await this._request(
+      this.getEndpoint(PRIVACY_CENTRIC_SERVICE_ENDPOINT.REQUEST),
+      body,
+    );
+    let data = (await response.json()).data;
+    let sensitiveInfo = await this.mapSensitivePersonalInformation(data);
+    STORAGE.set(person.id, sensitiveInfo);
+    return sensitiveInfo;
+  }
+
+  async mapSensitivePersonalInformation(data, obfuscated = false) {
+    let sensitiveInformation = {};
+    let dateOfBirth = data?.attributes?.['date-of-birth'];
+    let registration = data?.attributes?.registration;
+    let nationalities = data?.relationships?.nationalities?.data;
+    let genderData = data?.relationships?.gender?.data;
+    if (dateOfBirth) {
+      sensitiveInformation.dateOfBirth = obfuscated
+        ? dateOfBirth
+        : new Date(dateOfBirth);
+    }
+
+    if (registration) {
+      sensitiveInformation.ssn = registration;
+    }
+
+    if (nationalities?.length > 0) {
+      let idList = nationalities.map((nationaly) => nationaly.id).join();
+      if (obfuscated) {
+        sensitiveInformation.nationalities = idList;
+      } else {
+        const { content: nationalities } = await this.store.request(
+          queryBuilder('nationality', {
+            filter: {
+              ':id:': idList,
+            },
+          }),
+        );
+        sensitiveInformation.nationalities = nationalities.slice();
+      }
+    }
+
+    if (genderData?.id) {
+      if (obfuscated) {
+        sensitiveInformation.gender = genderData;
+      } else {
+        const { content: gender } = await this.store.request(
+          findRecord('gender-code', genderData.id),
+        );
+        sensitiveInformation.gender = gender;
+      }
+    }
+
+    return new SensitivePersonalInformation(sensitiveInformation);
+  }
+
+  /**
+   * Update sensitive information for a specific person
+   *
+   * @param {PersonModel} person
+   * @param {RequestReasonModel} updateReason
+   * @returns {Promise}
+   */
+  async updateInformation(sensitiveInformation, person, updateReason) {
+    await this._request(
+      this.getEndpoint(PRIVACY_CENTRIC_SERVICE_ENDPOINT.UPDATE),
+      generateUpdateRequestBody(sensitiveInformation, person, updateReason),
+    );
+    STORAGE.set(person.id, sensitiveInformation);
+  }
+
+  async _request(endpoint, body) {
+    return await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/vnd.api+json',
+        'Content-Type': 'application/vnd.api+json',
+      },
+      body: JSON.stringify(body),
+    });
+  }
+}
+
+export class SensitivePersonalInformation {
+  @tracked dateOfBirth;
+  @tracked ssn;
+  @tracked gender;
+  @tracked nationalities;
+
+  constructor({
+    dateOfBirth = null,
+    ssn = '',
+    gender = null,
+    nationalities = [],
+  } = {}) {
+    this.dateOfBirth = dateOfBirth;
+    this.ssn = ssn;
+    this.gender = gender;
+    this.nationalities = nationalities;
+  }
+  isEmpty() {
+    return (
+      !this?.gender &&
+      !this?.dateOfBirth &&
+      !this?.nationalities?.length &&
+      !this?.ssn
+    );
+  }
+}
+
+function generateUpdateRequestBody(information, person, reason) {
+  let body = {
+    data: {
+      type: 'person-information-updates',
+      attributes: {
+        'date-of-birth': information.dateOfBirth,
+        registration: information.ssn,
+      },
+      relationships: {
+        person: {
+          data: {
+            type: 'people',
+            id: person.id,
+          },
+        },
+        reason: {
+          data: {
+            type: 'request-reasons',
+            id: reason.id,
+          },
+        },
+        gender: null,
+        nationalities: {
+          data: [],
+        },
+      },
+    },
+  };
+
+  if (information.gender) {
+    body.data.relationships.gender = {
+      data: {
+        type: 'genders',
+        id: information.gender.id,
+      },
+    };
+  }
+
+  if (
+    Array.isArray(information.nationalities) &&
+    information.nationalities.length > 0
+  ) {
+    body.data.relationships.nationalities = {
+      data: information.nationalities.map((nationality) => ({
+        type: 'nationalities',
+        id: nationality.id,
+      })),
+    };
+  }
+
+  return body;
+}

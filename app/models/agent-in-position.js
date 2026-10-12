@@ -1,0 +1,33 @@
+import { attr, hasMany, belongsTo } from '@warp-drive/legacy/model';
+import AgentModel from './agent';
+
+export default class AgentInPositionModel extends AgentModel {
+  @attr('date') agentStartDate;
+  @attr('date') agentEndDate;
+
+  // Harvester provenance
+  @attr harvestSource;
+  @attr harvestOriginalUri;
+  @attr('date') harvestDate;
+  @attr harvestJob;
+  @attr harvestLink;
+  @belongsTo('vendor', {
+    inverse: null,
+    async: true,
+  })
+  vendor;
+
+  @belongsTo('person', {
+    inverse: 'agentsInPosition',
+    async: true,
+    polymorphic: true,
+    as: 'agent-in-position',
+  })
+  person;
+
+  @hasMany('contact-point', {
+    inverse: null,
+    async: true,
+  })
+  contacts;
+}

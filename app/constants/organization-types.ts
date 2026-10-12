@@ -1,0 +1,7 @@
+export const ORGANIZATION_TYPES = Object.freeze({
+  ADMINISTRATIVE_UNIT: 'Bestuurseenheid',
+  ASSOCIATION: 'Vereniging',
+  CORPORATION: 'Vennootschap',
+  PARTNERSHIP: 'Samenwerkingsverband',
+  OTHER: 'Andere',
+} as const);

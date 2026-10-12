@@ -1,0 +1,255 @@
+import { attr, hasMany, belongsTo } from '@warp-drive/legacy/model';
+import { action } from '@ember/object';
+import AgentModel from './agent';
+import Joi from 'joi';
+import {
+  validateBelongsToOptional,
+  validateBelongsToRequired,
+  validateHasManyOptional,
+  validateHasManyNotEmptyRequired,
+  validateStringOptional,
+} from '../validators/schema';
+import getOppositeClassifications from '../constants/memberships';
+import { ID_NAME } from './identifier';
+import {
+  MunicipalityCodeList,
+  OCMWCodeList,
+  DistrictCodeList,
+  ProvinceCodeList,
+  WorshipServiceCodeList,
+  CentralWorshipServiceCodeList,
+  CLASSIFICATION_CODES_WITHOUT_ADDITIONAL_QUALIFICATIONS,
+} from '../constants/classification';
+
+const CLASSIFICATION_CODES_WITHOUT_REQUIRED_CONTENT_THEMES = [
+  ...MunicipalityCodeList,
+  ...OCMWCodeList,
+  ...DistrictCodeList,
+  ...ProvinceCodeList,
+  ...WorshipServiceCodeList,
+  ...CentralWorshipServiceCodeList,
+];
+
+export default class OrganizationModel extends AgentModel {
+  @attr name;
+  @attr legalName;
+  @attr('string-set') alternativeName; // Note: changing to plural breaks stuff
+  @attr('date') expectedEndDate;
+  @attr purpose;
+
+  @belongsTo('organization-classification-code', {
+    inverse: null,
+    async: true,
+    polymorphic: true,
+  })
+  classification;
+
+  @belongsTo('concept', {
+    inverse: null,
+    async: true,
+  })
+  legalForm;
+
+  @hasMany('concept', {
+    inverse: null,
+    async: true,
+  })
+  contentThemes;
+
+  @belongsTo('site', {
+    inverse: null,
+    async: true,
+  })
+  primarySite;
+
+  @belongsTo('organization-status-code', {
+    inverse: null,
+    async: true,
+  })
+  organizationStatus;
+
+  @hasMany('identifier', {
+    inverse: null,
+    async: true,
+  })
+  identifiers;
+
+  @hasMany('site', {
+    inverse: null,
+    async: true,
+  })
+  sites;
+
+  @hasMany('change-event', {
+    inverse: 'originalOrganizations',
+    async: true,
+    polymorphic: true,
+    as: 'organization',
+  })
+  changedBy;
+
+  @hasMany('change-event', {
+    inverse: 'resultingOrganizations',
+    async: true,
+    polymorphic: true,
+    as: 'organization',
+  })
+  resultedFrom;
+
+  @hasMany('change-event-result', {
+    inverse: 'resultingOrganization',
+    async: true,
+    polymorphic: true,
+    as: 'organization',
+  })
+  changeEventResults;
+
+  @hasMany('post', {
+    inverse: null,
+    async: true,
+  })
+  positions;
+
+  @hasMany('membership', {
+    inverse: 'member',
+    async: true,
+    polymorphic: true,
+    as: 'organization',
+  })
+  membershipsOfOrganizations;
+
+  @hasMany('membership', {
+    inverse: 'organization',
+    async: true,
+    polymorphic: true,
+    as: 'organization',
+  })
+  memberships;
+
+  @belongsTo('kbo-organization', {
+    inverse: 'organization',
+    async: true,
+    as: 'organization',
+  })
+  kboOrganization;
+
+  @hasMany('vendor', {
+    inverse: 'organizations',
+    async: true,
+    as: 'organization',
+  })
+  vendors;
+
+  @hasMany('additional-qualification-code', {
+    inverse: null,
+    async: false,
+  })
+  additionalQualifications;
+
+  get validationSchema() {
+    const REQUIRED_MESSAGE = 'Selecteer een optie';
+    return super.validationSchema.append({
+      name: validateStringOptional(),
+      legalName: Joi.string().empty('').required().messages({
+        'any.required': 'Vul de juridische naam in',
+      }),
+      alternativeName: Joi.array().optional(),
+      expectedEndDate: Joi.date().allow(null),
+      purpose: validateStringOptional(),
+      classification: validateBelongsToRequired(REQUIRED_MESSAGE),
+      contentThemes: Joi.when('classification.id', {
+        is: Joi.exist().valid(
+          ...CLASSIFICATION_CODES_WITHOUT_REQUIRED_CONTENT_THEMES,
+        ),
+        then: validateHasManyOptional(),
+        otherwise: validateHasManyNotEmptyRequired(REQUIRED_MESSAGE),
+      }),
+      legalForm: Joi.when('classification.id', {
+        is: Joi.exist().valid(
+          ...WorshipServiceCodeList,
+          ...CentralWorshipServiceCodeList,
+        ),
+        then: Joi.optional(),
+        otherwise: validateBelongsToRequired(REQUIRED_MESSAGE),
+      }),
+      primarySite: validateBelongsToOptional(),
+      organizationStatus: validateBelongsToRequired(REQUIRED_MESSAGE),
+      identifiers: validateHasManyOptional(),
+      sites: validateHasManyOptional(),
+      changedBy: validateHasManyOptional(),
+      resultedFrom: validateHasManyOptional(),
+      changeEventResults: validateHasManyOptional(),
+      positions: validateHasManyOptional(),
+      membershipsOfOrganizations: validateHasManyOptional(),
+      memberships: validateHasManyOptional(),
+      kboOrganization: validateBelongsToOptional(),
+      vendors: validateHasManyOptional(),
+      additionalQualifications: Joi.when('classification.id', {
+        is: Joi.exist(),
+        then: Joi.when('classification.id', {
+          is: Joi.valid(
+            ...CLASSIFICATION_CODES_WITHOUT_ADDITIONAL_QUALIFICATIONS,
+          ),
+          then: validateHasManyOptional(),
+          otherwise: validateHasManyNotEmptyRequired(REQUIRED_MESSAGE),
+        }),
+        // If classification.id isn't set we make it optional as well, since we don't know which type we're dealing with yet.
+        otherwise: validateHasManyOptional(),
+      }),
+    });
+  }
+
+  get kboNumber() {
+    const identifiers = this.hasMany('identifiers').value();
+    if (!identifiers) return null;
+
+    for (const identifier of identifiers) {
+      const structuredIdentifier = identifier
+        .belongsTo('structuredIdentifier')
+        .value();
+      if (identifier.idName === ID_NAME.KBO) {
+        return structuredIdentifier.get('localId');
+      }
+    }
+
+    return null;
+  }
+
+  get abbName() {
+    return this.legalName ?? this.kboOrganization?.get('name') ?? this.name;
+  }
+
+  setAbbName(name) {
+    this.name = name;
+    this.legalName = name;
+  }
+
+  setAlternativeName(names) {
+    this.alternativeName = names
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s !== '');
+  }
+
+  _hasClassificationId(classificationIds) {
+    return classificationIds.includes(this.classification?.get('id'));
+  }
+
+  get requiresContentThemes() {
+    return !this._hasClassificationId(
+      CLASSIFICATION_CODES_WITHOUT_REQUIRED_CONTENT_THEMES,
+    );
+  }
+
+  /**
+   * @see {@link getOppositeClassifications}
+   */
+  @action
+  getClassificationCodesForMembership(membership) {
+    return getOppositeClassifications(membership, this);
+  }
+
+  get isActive() {
+    return this.belongsTo('organizationStatus').value().isActive;
+  }
+}

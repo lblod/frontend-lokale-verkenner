@@ -1,0 +1,19 @@
+steps:
+  install:
+    image: danlynn/ember-cli:6.7.2-node_22.19
+    commands:
+      - npm ci
+  lint:
+    image: danlynn/ember-cli:6.7.2-node_22.19
+    commands:
+      - npm run lint
+  dependency-lint:
+    image: danlynn/ember-cli:6.7.2-node_22.19
+    commands:
+      - npx ember dependency-lint
+  test:
+    image: danlynn/ember-cli:6.7.2-node_22.19
+    commands:
+      - npm run test:ember
+when:
+  - event: pull_request

@@ -1,0 +1,13 @@
+import Route from '@ember/routing/route';
+import { service } from '@ember/service';
+
+export default class PeopleNewPositionRoute extends Route {
+  @service currentSession;
+  @service router;
+
+  beforeModel() {
+    if (!this.currentSession.canEdit) {
+      this.router.transitionTo('unauthorized');
+    }
+  }
+}

@@ -1,0 +1,64 @@
+<div class="au-c-body-container au-c-body-container--scroll">
+  <div class="au-o-box au-o-flow au-o-flow--large">
+    <PageHeader class="au-o-box">
+      <:title>Gerelateerde organisaties</:title>
+      <:subtitle>{{@model.organization.abbName}}
+        ({{@model.organization.classification.label}})
+      </:subtitle>
+      <:action>
+        {{#if
+          (not
+            (or
+              @model.organization.isDistrict
+              @model.organization.isProvince
+              @model.organization.isRepresentativeBody
+              @model.organization.isAndere
+            )
+          )
+        }}
+          <SecuredArea>
+            <:edit>
+              <AuLink
+                @route="organizations.organization.related-organizations.edit"
+                @skin="button-secondary"
+                @icon="pencil"
+                @iconAlignment="left"
+              >
+                Bewerk
+              </AuLink>
+            </:edit>
+            <:readOnly>
+              <ReportWrongData />
+            </:readOnly>
+          </SecuredArea>
+        {{/if}}
+      </:action>
+    </PageHeader>
+
+    {{#if @model.organization.isWorshipAdministrativeUnit}}
+      <div>
+        Om de gerelateerde gemeenten te zien, ga naar
+        <LinkTo
+          class="au-c-link"
+          @model={{@model.organization.id}}
+          @route="organizations.organization.local-involvements.index"
+        >
+          Betrokken lokale besturen
+        </LinkTo>
+      </div>
+    {{/if}}
+
+    <div>
+      <RelatedOrganizationsViewTable
+        @model={{@model}}
+        id="relatedOrganizations"
+        @organizationStatus={{this.organizationStatus}}
+        @onOrganizationStatusChange={{fn (mut this.organizationStatus)}}
+        @sort={{this.sort}}
+        @page={{this.page}}
+        @size={{this.size}}
+        @selectedRole={{this.selectedRoleLabel}}
+      />
+    </div>
+  </div>
+</div>

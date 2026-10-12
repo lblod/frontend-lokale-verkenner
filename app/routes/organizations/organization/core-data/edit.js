@@ -1,0 +1,156 @@
+import Route from '@ember/routing/route';
+import { service } from '@ember/service';
+import {
+  createPrimaryContact,
+  createSecondaryContact,
+  findPrimaryContact,
+  findSecondaryContact,
+} from 'frontend-organization-portal/models/contact-point';
+import { createAddress } from 'frontend-organization-portal/models/address';
+import { ID_NAME } from 'frontend-organization-portal/models/identifier';
+import { A } from '@ember/array';
+import { action } from '@ember/object';
+
+export default class OrganizationsOrganizationCoreDataEditRoute extends Route {
+  @service store;
+  @service currentSession;
+  @service router;
+  @service scopeOfOperation;
+
+  locationsInScope = [];
+
+  beforeModel() {
+    if (!this.currentSession.canEdit) {
+      this.router.transitionTo('unauthorized');
+    }
+  }
+
+  @action
+  willTransition() {
+    // controller needs to be reset before index model hook is called
+    // willTransition is the first hook called when transitioning to another route
+    // eslint-disable-next-line ember/no-controller-access-in-routes
+    this.controller.reset();
+  }
+
+  async model() {
+    let organization = this.modelFor('organizations.organization.core-data');
+
+    let primarySite = await organization.primarySite;
+
+    // TODO: "if" not needed when the data of all organizations is correct, they
+    // should all have a primary site on creation.
+    let address;
+    let contacts;
+    if (primarySite) {
+      address = await primarySite.address;
+      contacts = await primarySite.contacts;
+    } else {
+      address = createAddress(this.store);
+      contacts = A();
+    }
+
+    let primaryContact = findPrimaryContact(contacts);
+    if (!primaryContact) {
+      primaryContact = createPrimaryContact(this.store);
+    }
+
+    let secondaryContact = findSecondaryContact(contacts);
+    if (!secondaryContact) {
+      secondaryContact = createSecondaryContact(this.store);
+    }
+
+    let identifiers = await organization.identifiers;
+    let missingIdentifiers = this.createMissingIdentifiers(identifiers);
+    identifiers.push(...missingIdentifiers);
+
+    let identifierKBO = identifiers.find(
+      ({ idName }) => idName === ID_NAME.KBO,
+    );
+    // Not all organization types have a KBO so identifierKBO can be undefined.
+    let structuredIdentifierKBO = await identifierKBO?.structuredIdentifier;
+
+    let identifierSharepoint = identifiers.find(
+      ({ idName }) => idName === ID_NAME.SHAREPOINT,
+    );
+    let structuredIdentifierSharepoint =
+      await identifierSharepoint.structuredIdentifier;
+
+    let identifierNIS = identifiers.find(
+      ({ idName }) => idName === ID_NAME.NIS,
+    );
+    let structuredIdentifierNIS = await identifierNIS.structuredIdentifier;
+
+    let identifierOVO = identifiers.find(
+      ({ idName }) => idName === ID_NAME.OVO,
+    );
+    let structuredIdentifierOVO = await identifierOVO.structuredIdentifier;
+
+    // `displayRegion` is derived from the organization's classification, so make
+    // sure that relationship is loaded before render (incl. in-app navigation).
+    await organization.classification;
+
+    // Reference regions (nl. referentieregio's) are derived from the
+    // organization's werkingsgebied; an organization can cover multiple of them.
+    const regions =
+      await this.scopeOfOperation.getReferentieregiosInScope(organization);
+
+    this.locationsInScope =
+      await this.scopeOfOperation.getLocationsInScope(organization);
+
+    const vendors = await organization.vendors;
+
+    return {
+      organization,
+      address,
+      contact: primaryContact,
+      secondaryContact,
+      identifierKBO,
+      identifierSharepoint,
+      identifierNIS,
+      identifierOVO,
+      structuredIdentifierKBO,
+      structuredIdentifierSharepoint,
+      structuredIdentifierNIS,
+      structuredIdentifierOVO,
+      regions,
+      vendors,
+    };
+  }
+
+  createMissingIdentifiers(currentIdentifiers) {
+    const requiredIdNames = [
+      ID_NAME.KBO,
+      ID_NAME.SHAREPOINT,
+      ID_NAME.NIS,
+      ID_NAME.OVO,
+    ];
+
+    return requiredIdNames.reduce((missingIdentifiers, requiredIdName) => {
+      let identifier = currentIdentifiers.find(
+        ({ idName }) => idName === requiredIdName,
+      );
+
+      if (!identifier) {
+        identifier = this.store.createRecord('identifier', {
+          idName: requiredIdName,
+        });
+
+        let structuredIdentifier = this.store.createRecord(
+          'structured-identifier',
+        );
+
+        identifier.structuredIdentifier = structuredIdentifier;
+        missingIdentifiers.push(identifier);
+      }
+
+      return missingIdentifiers;
+    }, []);
+  }
+
+  setupController(controller) {
+    super.setupController(...arguments);
+
+    controller.set('locationsInScope', this.locationsInScope);
+  }
+}

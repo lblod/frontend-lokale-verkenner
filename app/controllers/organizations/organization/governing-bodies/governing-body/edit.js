@@ -1,0 +1,42 @@
+import Controller from '@ember/controller';
+import { dropTask } from 'ember-concurrency';
+import { service } from '@ember/service';
+import { action } from '@ember/object';
+import { saveRecord } from '@warp-drive/legacy/compat/builders';
+
+export default class OrganizationsOrganizationGoverningBodiesGoverningBodyEditController extends Controller {
+  @service router;
+  @service store;
+
+  get hasValidationErrors() {
+    return this.model.governingBody.error;
+  }
+
+  @action
+  cancel() {
+    this.reset();
+
+    this.router.transitionTo(
+      'organizations.organization.governing-bodies.governing-body',
+    );
+  }
+
+  save = dropTask(async (event) => {
+    event.preventDefault();
+
+    await this.model.governingBody.validate();
+
+    if (!this.hasValidationErrors) {
+      await this.store.request(saveRecord(this.model.governingBody));
+
+      this.router.transitionTo(
+        'organizations.organization.governing-bodies.governing-body',
+        this.model.governingBody.id,
+      );
+    }
+  });
+
+  reset() {
+    this.model.governingBody.reset();
+  }
+}
