@@ -49,9 +49,12 @@ export default class CurrentSessionService extends Service {
       );
       this.account = account;
       this.user = this.account.user;
-      this.roles = Array.isArray(this.account.roles)
-        ? [...new Set(this.account.roles)]
-        : [];
+      let accountRoles = this.account.roles;
+      if (!Array.isArray(accountRoles)) {
+        accountRoles = [];
+      }
+      let uniqueRoles = new Set(accountRoles);
+      this.roles = [...uniqueRoles];
 
       // The group is not defined for acm idm logins, so only resolve it when
       // the session data provides one (e.g. mock login).
