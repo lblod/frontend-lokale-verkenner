@@ -10,6 +10,9 @@ export default class MockLoginRoute extends Route {
     page: {
       refreshModel: true,
     },
+    organisatie: {
+      refreshModel: true,
+    },
   };
 
   beforeModel() {
@@ -17,11 +20,19 @@ export default class MockLoginRoute extends Route {
   }
 
   async model(params) {
+    let filter = {
+      provider: 'https://github.com/lblod/mock-login-service',
+    };
+    if (params.organisatie) {
+      filter.user = { organizations: params.organisatie };
+    }
+
     let { content: accounts } = await this.store.request(
       query('account', {
-        include: 'user.groups',
-        filter: { provider: 'https://github.com/lblod/mock-login-service' },
+        include: 'user.organizations',
+        filter,
         page: { size: 10, number: params.page },
+        sort: 'user.family-name',
       }),
     );
 
