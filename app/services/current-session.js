@@ -34,14 +34,12 @@ export default class CurrentSessionService extends Service {
   @tracked account;
   @tracked user;
   @tracked group;
+  @tracked groupClassification;
   @tracked roles;
 
   async load() {
     if (this.session.isAuthenticated) {
       let sessionData = this.session.data.authenticated.relationships;
-      this.roles = [
-        ...new Set(this.session.data.authenticated.data?.attributes?.roles),
-      ];
       let accountId = sessionData.account.data.id;
 
       const { content: account } = await this.store.request(
@@ -51,10 +49,23 @@ export default class CurrentSessionService extends Service {
       );
       this.account = account;
       this.user = this.account.user;
+      this.roles = Array.isArray(this.account.roles)
+        ? [...new Set(this.account.roles)]
+        : [];
 
-      // TODO no group / roles for now. not defined for acm idm, thus break the app when using acm idm login
-      //let groupId = sessionData?.group?.data?.id;
-      //this.group = await this.store.findRecord('group', groupId);
+      // The group is not defined for acm idm logins, so only resolve it when
+      // the session data provides one (e.g. mock login).
+      let groupId = sessionData?.group?.data?.id;
+      if (groupId) {
+        const { content: group } = await this.store.request(
+          findRecord('organization', groupId, {
+            include: 'classification',
+            reload: true,
+          }),
+        );
+        this.group = group;
+        this.groupClassification = await this.group.classification;
+      }
     }
   }
   get hasWorshipRole() {
