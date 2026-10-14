@@ -11,8 +11,6 @@ Router.map(function () {
 
   this.route('mock-login');
 
-  this.route('select-role');
-
   this.route('auth', { path: '/authorization' }, function () {
     this.route('callback');
     this.route('login');

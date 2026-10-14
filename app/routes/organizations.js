@@ -10,7 +10,7 @@ export default class OrganizationsRoute extends Route {
     this.session.requireAuthentication(transition, 'login');
 
     if (!this.role.activeRole) {
-      return this.router.transitionTo('select-role');
+      return this.router.transitionTo('index');
     }
   }
 }
