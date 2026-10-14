@@ -11,7 +11,7 @@ export default class AuthLogoutRoute extends Route {
     if (this.session.requireAuthentication(transition, 'login')) {
       try {
         let wasMockLoginSession = this.session.isMockLoginSession;
-        await this.role.destroyActiveRole();
+        this.role.clearActiveRole();
         await this.session.invalidate();
         let logoutUrl = wasMockLoginSession
           ? this.router.urlFor('mock-login')
