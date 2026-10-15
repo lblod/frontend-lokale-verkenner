@@ -6,7 +6,9 @@ import { action } from '@ember/object';
 import { setEmptyStringsToNull } from 'frontend-organization-portal/utils/empty-string-to-null';
 import isContactEditableOrganization from 'frontend-organization-portal/utils/editable-contact-data';
 import { tracked } from '@glimmer/tracking';
-import { saveRecord } from '@warp-drive/legacy/compat/builders';
+import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
+import { ScopeOfOperationError } from 'frontend-organization-portal/services/scope-of-operation';
+import { isLoaded } from 'frontend-organization-portal/utils/records';
 import requiresKbo from '../../../../helpers/requires-kbo';
 
 export default class OrganizationsOrganizationCoreDataEditController extends Controller {
@@ -14,8 +16,25 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
   @service store;
   @service features;
   @service scopeOfOperation;
+  @service changeRequests;
+  @service toaster;
 
+  /**
+   * The locations of the organisation's werkingsgebied as the route loaded
+   * them and the user edited them. Null when they could not be loaded: the
+   * werkingsgebied is then left as it is on save, see `scopeNotLoaded`.
+   */
   @tracked locationsInScope;
+  /**
+   * The message of the change-request service when it refused the last save.
+   */
+  @tracked saveError;
+  /**
+   * Whether the last save ended without knowing whether the change was
+   * applied (a 5xx); a retry could apply it twice, so saving stays blocked
+   * until the page is reloaded.
+   */
+  @tracked saveBlocked = false;
 
   get hasValidationErrors() {
     return (
@@ -27,6 +46,14 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
         this.model.identifierKBO?.error) ||
       this.model.identifierSharepoint.error
     );
+  }
+
+  /**
+   * Whether the locations of the werkingsgebied could not be loaded, in
+   * which case the field is shown disabled and the werkingsgebied is kept.
+   */
+  get scopeNotLoaded() {
+    return this.locationsInScope === null;
   }
 
   get vendorsString() {
@@ -55,6 +82,10 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
 
   save = dropTask(async (event) => {
     event.preventDefault();
+    if (this.saveBlocked) {
+      return;
+    }
+    this.saveError = null;
 
     let {
       organization,
@@ -71,12 +102,25 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
     // did not select any locations, or removed all originally set
     // locations. Otherwise, any edits are ignored and the previously set scope
     // of operation is just silently kept.
-    organization.scope =
-      this.locationsInScope?.length > 0
-        ? await this.scopeOfOperation.getScopeForLocations(
-            ...this.locationsInScope,
-          )
-        : undefined;
+    // When the locations could not be loaded (`locationsInScope` is null)
+    // the werkingsgebied is not touched: an empty selection then means
+    // "unknown", not "cleared by the user".
+    if (this.locationsInScope !== null) {
+      try {
+        organization.scope =
+          this.locationsInScope?.length > 0
+            ? await this.scopeOfOperation.getScopeForLocations(
+                ...this.locationsInScope,
+              )
+            : undefined;
+      } catch (error) {
+        if (error instanceof ScopeOfOperationError) {
+          this.saveError = error.message;
+          return;
+        }
+        throw error;
+      }
+    }
 
     await Promise.all([
       organization.validate({ relaxMandatoryFoundingOrganization: true }),
@@ -89,10 +133,11 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
       await identifierKBO.validate();
     }
 
-    if (
+    const isContactDataEditable =
       this.features.isEnabled('edit-contact-data') ||
-      isContactEditableOrganization(this.model.organization)
-    ) {
+      isContactEditableOrganization(this.model.organization);
+
+    if (isContactDataEditable) {
       await Promise.all([
         address.validate(),
         contact.validate(),
@@ -101,10 +146,12 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
     }
 
     if (!this.hasValidationErrors) {
-      if (
-        this.features.isEnabled('edit-contact-data') ||
-        isContactEditableOrganization(this.model.organization)
-      ) {
+      // The records of the change request, dependencies first: the address
+      // and the contact points before the site, the structured identifiers
+      // before their identifiers, the organisation last.
+      const records = [];
+
+      if (isContactDataEditable) {
         let primarySite = await organization.primarySite;
 
         // TODO: "if" not needed when the data of all organizations will be
@@ -120,43 +167,30 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
             address.province = '';
           }
           address.fullAddress = combineFullAddress(address);
-          address = setEmptyStringsToNull(address);
-          await this.store.request(saveRecord(address));
+          records.push(setEmptyStringsToNull(address));
         }
 
         let siteContacts = await primarySite.contacts;
+        let isSiteChanged = primarySite.isNew;
 
-        if (contact.hasDirtyAttributes) {
-          let isNewContact = contact.isNew;
-
-          contact = setEmptyStringsToNull(contact);
-          await this.store.request(saveRecord(contact));
-
-          if (isNewContact) {
-            siteContacts.push(contact);
-            await this.store.request(saveRecord(primarySite));
+        for (let contactPoint of [contact, secondaryContact]) {
+          if (contactPoint.hasDirtyAttributes) {
+            if (contactPoint.isNew) {
+              siteContacts.push(contactPoint);
+              isSiteChanged = true;
+            }
+            records.push(setEmptyStringsToNull(contactPoint));
           }
         }
 
-        if (secondaryContact.hasDirtyAttributes) {
-          let isNewContact = secondaryContact.isNew;
-
-          secondaryContact = setEmptyStringsToNull(secondaryContact);
-          await this.store.request(saveRecord(secondaryContact));
-
-          if (isNewContact) {
-            siteContacts.push(secondaryContact);
-            await this.store.request(saveRecord(primarySite));
-          }
+        if (isSiteChanged) {
+          records.push(primarySite);
         }
       }
 
       if (requiresKboNumber) {
-        structuredIdentifierKBO = setEmptyStringsToNull(
-          structuredIdentifierKBO,
-        );
-        await this.store.request(saveRecord(structuredIdentifierKBO));
-        await this.store.request(saveRecord(identifierKBO));
+        records.push(setEmptyStringsToNull(structuredIdentifierKBO));
+        records.push(identifierKBO);
       }
 
       // FIXME: If uncommented existing SharePoint identifier is not removed
@@ -166,40 +200,99 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
       // structuredIdentifierSharepoint = setEmptyStringsToNull(
       //   structuredIdentifierSharepoint,
       // );
-      await this.store.request(saveRecord(structuredIdentifierSharepoint));
-      await this.store.request(saveRecord(identifierSharepoint));
+      records.push(structuredIdentifierSharepoint);
+      records.push(identifierSharepoint);
 
-      organization = setEmptyStringsToNull(organization);
-      await this.store.request(saveRecord(organization));
+      records.push(setEmptyStringsToNull(organization));
+
+      let saved;
+      try {
+        saved = await this.changeRequests.submit(
+          'organization-core-data',
+          organization.id,
+          records,
+        );
+      } catch (error) {
+        if (!(error instanceof ChangeRequestError)) {
+          throw error;
+        }
+        if (error.applied) {
+          // The change is in the application graph but the page could not
+          // follow it up; leave it, the index page loads the applied state.
+          this.toaster.warning(error.message, 'Wijziging doorgevoerd');
+          this.leave(organization.id);
+          return;
+        }
+        // The records keep their edits so the user can correct and retry,
+        // unless the outcome is unknown: a retry could apply the change twice.
+        this.saveError = error.message;
+        this.saveBlocked = error.outcomeUnknown;
+        return;
+      }
 
       if (requiresKboNumber) {
-        const syncKboData = `/kbo-data-sync/${structuredIdentifierKBO.id}`;
+        const syncKboData = `/kbo-data-sync/${saved.get(structuredIdentifierKBO).id}`;
         await fetch(syncKboData, {
           method: 'POST',
         });
       }
 
-      this.router.refresh();
-      this.router.transitionTo(
-        'organizations.organization.core-data',
-        organization.id,
-      );
+      this.leave(organization.id);
     }
   });
 
+  leave(organizationId) {
+    this.router.refresh();
+    this.router.transitionTo(
+      'organizations.organization.core-data',
+      organizationId,
+    );
+  }
+
   resetUnsavedRecords() {
-    this.model.organization.reset();
-    this.model.contact.reset();
-    this.model.secondaryContact.reset();
-    this.model.address.reset();
-    this.model.structuredIdentifierKBO.rollbackAttributes();
-    this.model.identifierKBO.reset();
-    this.model.structuredIdentifierSharepoint.rollbackAttributes();
-    this.model.identifierSharepoint.reset();
+    let {
+      organization,
+      address,
+      contact,
+      secondaryContact,
+      identifierSharepoint,
+      identifierKBO,
+      structuredIdentifierSharepoint,
+      structuredIdentifierKBO,
+    } = this.model;
+
+    // Relationship changes of this page, such as a new primary site or
+    // identifier, are discarded along with the records they point to.
+    this.changeRequests.rollbackRelationships(organization);
+
+    // New records are unloaded once the change request that created them is
+    // applied, so they may be gone by the time the page is left.
+    for (let record of [
+      organization,
+      contact,
+      secondaryContact,
+      address,
+      identifierKBO,
+      identifierSharepoint,
+    ]) {
+      if (isLoaded(record)) {
+        record.reset();
+      }
+    }
+    for (let record of [
+      structuredIdentifierKBO,
+      structuredIdentifierSharepoint,
+    ]) {
+      if (isLoaded(record)) {
+        record.rollbackAttributes();
+      }
+    }
   }
 
   reset() {
     this.resetUnsavedRecords();
     this.locationsInScope = [];
+    this.saveError = null;
+    this.saveBlocked = false;
   }
 }

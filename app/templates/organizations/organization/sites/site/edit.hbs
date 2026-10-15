@@ -18,7 +18,7 @@
             <AuButton
               @loading={{this.save.isRunning}}
               @loadingMessage="Opslaan"
-              @disabled={{this.save.isRunning}}
+              @disabled={{or this.save.isRunning this.saveBlocked}}
               type="submit"
               form="edit-vestiging-form"
             >
@@ -26,6 +26,7 @@
             </AuButton>
           </AuButtonGroup>
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
+          <Error::ChangeRequest @message={{this.saveError}} />
           <ReportWrongData />
         </div>
       </:action>

@@ -14,7 +14,7 @@
             <AuButton
               @loading={{this.createSiteTask.isRunning}}
               @loadingMessage="Voeg toe"
-              @disabled={{this.createSiteTask.isRunning}}
+              @disabled={{or this.createSiteTask.isRunning this.saveBlocked}}
               @icon="add"
               @iconAlignment="left"
               type="submit"
@@ -24,6 +24,7 @@
             </AuButton>
           </AuButtonGroup>
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
+          <Error::ChangeRequest @message={{this.saveError}} />
         </div>
       </:action>
     </PageHeader>

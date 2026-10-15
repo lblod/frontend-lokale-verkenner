@@ -16,7 +16,7 @@
             <AuButton
               @loading={{this.save.isRunning}}
               @loadingMessage="Opslaan"
-              @disabled={{this.save.isRunning}}
+              @disabled={{or this.save.isRunning this.saveBlocked}}
               form="edit-core-info-form"
               type="submit"
             >
@@ -24,6 +24,7 @@
             </AuButton>
           </AuButtonGroup>
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
+          <Error::ChangeRequest @message={{this.saveError}} />
           <ReportWrongData />
         </div>
       </:action>
@@ -272,10 +273,19 @@
                       <LocationMultipleSelect
                         @selected={{this.locationsInScope}}
                         @onChange={{fn (mut this.locationsInScope)}}
-                        @disabled={{@model.organization.disableScopeEdits}}
+                        @disabled={{or
+                          @model.organization.disableScopeEdits
+                          this.scopeNotLoaded
+                        }}
                         @error={{@model.organization.error.scope}}
                         @id="locations-select"
                       />
+                      {{#if this.scopeNotLoaded}}
+                        <AuHelpText @warning={{true}}>
+                          Het werkingsgebied kon niet geladen worden en blijft
+                          ongewijzigd bij het opslaan.
+                        </AuHelpText>
+                      {{/if}}
                     </:content>
                   </Item>
                 {{/if}}

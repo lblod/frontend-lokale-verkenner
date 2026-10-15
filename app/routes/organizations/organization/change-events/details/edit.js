@@ -3,14 +3,14 @@ import { service } from '@ember/service';
 import { CHANGE_EVENT_TYPE } from 'frontend-organization-portal/models/change-event-type';
 
 export default class OrganizationsOrganizationChangeEventsDetailsEditRoute extends Route {
-  @service currentSession;
   @service router;
   @service store;
 
   beforeModel() {
-    if (!this.currentSession.canEdit) {
-      this.router.transitionTo('unauthorized');
-    }
+    // Not switched to change requests: the saves of this page go straight to
+    // the resource routes, which the backend refuses. Nothing links to it
+    // until it is switched; it never opens.
+    this.router.transitionTo('unauthorized');
   }
 
   async model() {
