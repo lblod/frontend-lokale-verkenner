@@ -123,10 +123,12 @@ Or in template files by using the `is-feature-enabled` helper:
 Every edit this application makes to an organisation is a change request,
 sent to the change-request service of the backend (`/change-requests`), which
 checks who may edit what, keeps the request with the proposed state as its
-history and applies it to the organisation data. In the first iteration every
-request is applied immediately. The resource routes are read-only for this
-application: the backend refuses a write on them, and the pages that still
-contain such a write (see the table) are closed.
+history and applies it to the organisation data. A request is applied
+immediately, unless someone else changed the same data since the page loaded
+it: the service then keeps the request without applying it, for a decision by
+ABB (see [Held requests](#held-requests)). The resource routes are read-only
+for this application: the backend refuses a write on them, and the pages that
+still contain such a write (see the table) are closed.
 
 ### Which pages edit
 
@@ -142,7 +144,12 @@ contain such a write (see the table) are closed.
 | Nieuwe positie (`people/new-position`)                                         | a static notice without a save; its guard reads `canEdit`, which is false outside the organisation pages |
 
 A page is switched by replacing its chain of `saveRecord` calls with one
-`submit` and by handling `ChangeRequestError` as the switched pages do.
+`submit` and by handling `ChangeRequestError` as the switched pages do,
+including a held request (refresh the route that loads the page's records,
+build the form again and show `Error::ChangeRequestHeld` with the page's
+labels for the fields, see [Held requests](#held-requests)) and a failed
+apply (block saving and offer `reapply`, see
+[Failed applies](#failed-applies)).
 
 ### The `change-requests` service
 
@@ -161,11 +168,14 @@ A page is switched by replacing its chain of `saveRecord` calls with one
   to-many relationship that is not part of the request is left out, as the
   serializer leaves out every new record (the kerngegevens page keeps
   placeholder identifiers in `organization.identifiers` that it does not
-  submit). On `201` the service answers with the uuids it minted for the
-  `lid`s; the local changes are discarded, the client-side new records are
-  unloaded and every record is reloaded from the backend. `submit` returns a
-  `Map` from each submitted record to its reloaded record (a fresh record for
-  the new ones).
+  submit). Every update carries the values the record was loaded with as its
+  base (see [Base values](#base-values)). On `201` with status `goedgekeurd`
+  the service answers with the uuids it minted for the `lid`s; the local
+  changes are discarded, the client-side new records are unloaded and every
+  record is reloaded from the backend. `submit` returns a `Map` from each
+  submitted record to its reloaded record (a fresh record for the new ones).
+  On `201` with status `ingediend` the request is held, see
+  [Held requests](#held-requests).
 - A failed `submit` rejects with a `ChangeRequestError` whose `message` is
   for the user (from the JSON:API `errors` array when there is one). Its flags
   say what the page does with its edits:
@@ -178,7 +188,20 @@ A page is switched by replacing its chain of `saveRecord` calls with one
     the change twice;
   - `applied` (the service answered `2xx` but the answer lacks a minted id or
     a reload failed): the change is in the application graph; the page leaves
-    with a warning toast, the index page loads the applied state.
+    with a warning toast, the index page loads the applied state;
+  - `held` (the service answered `201` with status `ingediend`): nothing is
+    applied and the request waits for ABB; `conflicts` lists the fields
+    someone else changed and `requestId` is the request. `submit` has
+    discarded the local changes, see [Held requests](#held-requests);
+    `reloadFailed` is set when it could not reload the records afterwards;
+  - `applyFailed` (a `409` whose `meta["change-request"]` has status
+    `mislukt`): the service kept the request (`requestId`) but its apply
+    failed; the page keeps its edits, blocks the save button and offers to
+    apply the kept request again, see [Failed applies](#failed-applies).
+- `withdraw(requestId)` withdraws a held request (an `intrekking` step,
+  `POST /change-requests/:id/steps`), `reapply(requestId)` applies a request
+  whose apply failed again (a `hertoepassing` step). Both reject with a
+  `ChangeRequestError` whose message says why not, in Dutch.
 - `permissions(targetId)` asks `GET /change-requests/permissions?target=…`
   whether the session may edit an organisation and returns
   `{ canEdit, rules }`, `rules` being the names of the policy rules that
@@ -232,6 +255,11 @@ administrative unit:
             "id": "9a01…",
             "relationships": {
               "primary-site": { "data": { "type": "sites", "lid": "c1d2…" } }
+            },
+            "meta": {
+              "base": {
+                "relationships": { "primary-site": { "data": null } }
+              }
             }
           }
         }
@@ -245,13 +273,132 @@ administrative unit:
 ```
 
 `op` is `create` for a new record, `update` for a persisted one and `delete`
-for a record whose deletion is pending.
+for a record whose deletion is pending. Only an update carries `meta.base`.
 
 The type of an operation is the record's own resource type, as the serializer
 writes it: an organisation is sent as `administrative-units`,
 `registered-organizations`, … (its subtype), and the service accepts every
 subtype of a type in the aggregate. Only the `target` of the request is
 always `organizations`.
+
+### Base values
+
+The pages send every attribute of a record, and every relationship the store
+has loaded, not only what the user changed. So that a form that was opened
+before someone else saved does not overwrite that save, every `update`
+operation carries in `data.meta.base` the values the record had when the page
+loaded it, for the keys the operation carries:
+
+```json
+"meta": {
+  "base": {
+    "attributes": { "legal-name": "Gemeente Aalst", "alternative-name": ["Aalst"] },
+    "relationships": {
+      "primary-site": { "data": { "type": "sites", "id": "77c2…" } },
+      "sites": { "data": [{ "type": "sites", "id": "77c2…" }] }
+    }
+  }
+}
+```
+
+`serializeBase` in the service takes them from the store's cache: a changed
+attribute has its value from before the change (`changedAttributes` gives
+`[old, new]`), a changed relationship its remote state, and an unchanged key
+its current value. They are written by the same serializer as the proposal,
+so the keys, the transforms (ISO dates, arrays for a string set) and the
+resource identifiers (`{ type, id }`, an array for a to-many, `null` for an
+empty to-one) are those of the proposal, and an unchanged key has its
+proposal as its base. One transform loses the stored form: `phone` reads
+`tel:+32…` and a number stored without the prefix alike, always writes
+`tel:`, and writes `""` as `null`, while the service compares a telephone
+number exactly. The application serializer therefore keeps, when it loads a
+record, the stored form of every telephone number it would write
+differently (`loadedForm`), and the base of a changed number is that stored
+form (`1770`, `""`), so that the service finds the value it holds. Every key
+an update carries has a base: the attributes come with the record, the
+serializer only sends a relationship the store has loaded or the page has
+set, and the pages load a relationship before they change it, so its remote
+state is the value on the server when the page was opened. Creates and
+deletes carry no base.
+
+The service compares, per single-valued key (an attribute that is not a set,
+a to-one relationship), the proposed value `P`, the base `B` and the current
+value `C` on the master: `P = B` is a key the user did not change and is not
+written; `C = B` is written; `C = P` is the same change made by someone else
+and is not written either; any other `C` is a conflict, the proposal is kept
+and the request is held. A set (a to-many relationship such as `sites` or
+`contacts`, a set attribute such as `alternative-name`) merges instead: the
+service adds what `P` has and `B` had not and removes what `B` had and `P`
+has not, so what others changed in the meantime stays and a set never
+conflicts. Two pages that each add a vestiging both get theirs; two pages
+that each make their new vestiging the primary site conflict on
+`primary-site`.
+
+### Held requests
+
+When the service finds a conflict it records the request with status
+`ingediend` and answers `201` without applying anything; the request waits for
+a decision by ABB, who approves or rejects it later on the service
+(`POST /change-requests/:id/steps`; this application has no screen for that
+yet). For the frontend this is neither a success nor a refusal:
+
+- `submit` discards the local changes, unloads the new records (they exist in
+  the request only) and reloads the other records with the relationships the
+  request changed, then rejects with a `ChangeRequestError` whose `held` flag
+  is set, whose `requestId` is the request and whose `conflicts` are the
+  service's list: per field the `resource` (`{ type, id }`), the `key`, the
+  `base`, `current` and `proposed` values and the `competing-requests`.
+- The page refreshes the route that loads its records with everything the
+  form shows, so that also the records the request did not contain are
+  current: the kerngegevens page refreshes `core-data` (the organisation with
+  its primary site, address, contact points and identifiers), the page of a
+  vestiging refreshes `sites.site` (the site with its address and contact
+  points; the edit route reloads the organisation's sites itself), the page
+  of a new vestiging its own route (the new records are created anew).
+- Refreshing a route does not build its template again: Ember keeps every
+  component and only passes the new model, so components that copy an
+  argument when they are created (the address search, the rich-text editor,
+  the qualifications choice) would keep showing the rejected values. After
+  the refresh the page bumps `formRevision`, and its form, wrapped in
+  `<Rebuild @key={{this.formRevision}}>`, is created anew from the reloaded
+  records.
+- The page then shows `Error::ChangeRequestHeld`: a warning that the change
+  was not applied because someone else changed the same data in the
+  meantime, naming the fields, that the request waits for a decision by ABB,
+  and that saving the same fields again replaces it: the service then
+  withdraws the held request itself (saving only part of them leaves it
+  waiting next to the new change); a button withdraws the held request
+  (`withdraw`). When a save replaced earlier requests, the service lists them
+  in `superseded` and `submit` shows a toast saying they were withdrawn. The
+  names are the page's labels for the key of the
+  record in conflict, from `app/utils/change-request-conflicts.js` (the key
+  itself when there is no label). Refreshing resets the controller, so the
+  notice is set afterwards.
+- A new save is a new request, whose base is what the form now shows, and
+  the service checks it against the current values again. On the page of a
+  new vestiging a held request means that the site was not created; the
+  notice says so and the form is empty again.
+- When `submit` could not reload the records (`reloadFailed`, the error is
+  logged), the store holds the values the page loaded, not the current ones:
+  the notice asks for a reload and saving is blocked. When the refresh itself
+  fails, the router shows the error page; a warning toast then says that the
+  request waits for ABB.
+
+### Failed applies
+
+The service applies a request in one SPARQL update that is not one
+transaction: when it fails twice it keeps the request with status
+`mislukt`, and the apply may have stopped half-way, leaving the keys it
+changes empty on the organisation. It answers `409` with
+`meta["change-request"]` (`{ id, status: "mislukt" }`). A new save would
+start from the values the page loaded, find the emptied keys and be held as
+a conflict, so the page keeps its edits, blocks the save button and shows an
+"Opnieuw toepassen" button that applies the kept request again (`reapply`, a
+`hertoepassing` step). Once it is applied the page is left as after a save.
+When it fails again, with a `5xx` or without reaching the service, it can be
+tried again (the service does not apply a request twice); when the service
+refuses it (`refused`), e.g. because another request on the organisation was
+applied after it failed, the page asks for a reload.
 
 ### Aggregates
 
@@ -262,6 +409,15 @@ accepts the types that belong to it.
 | ------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `organization-core-data` | Kerngegevens (`core-data/edit`)              | the address and the contact points when changed, the primary site when new or when a contact point was added, the KBO (when the type requires one) and SharePoint structured identifiers and identifiers, the organisation                                         |
 | `site`                   | Vestigingen (`sites/new`, `sites/site/edit`) | the contact points and the address when changed (always for a new site), the site, the organisation: always on `sites/new`, where it links the new site through its `sites` or `primary-site` relationship, and on `sites/site/edit` when the primary site changes |
+
+The edit routes create a placeholder for a contact point the site lacks and
+for a missing SharePoint identifier. A new record is always dirty, so a
+placeholder is only submitted, and linked from the site or the organisation,
+once the user filled it in (`hasUserInput` in `app/utils/records.js`: an
+attribute with a value other than the ones the route set, such as the `type`
+of a contact point); otherwise every save would create an empty contact point
+or identifier and change `contacts` or `identifiers`, lists nobody edited, so
+that a save of the kerngegevens without changes would still write.
 
 The werkingsgebied of the kerngegevens page is resolved through the
 `scope-of-operation` service (`app/services/scope-of-operation.js`) before the
@@ -290,6 +446,20 @@ with the service:
   master; the kerngegevens page can only change it once the aggregate admits
   it and the `scope-of-operation` service, which mints locations outside the
   change-request policy, is part of the stack.
+- `meta.base` of an update carries, for every key the operation carries, the
+  loaded value in the serialisation of the proposal (see
+  [Base values](#base-values)), relationships included.
+- A request the service does not apply answers `201` with
+  `attributes.status` `ingediend`, its id in `data.id` and
+  `attributes.conflicts`; the frontend reads `resource.id` and `key` of each
+  conflict to name the field. It does not require `lids` in that answer, and
+  does not show the steps of a request or a decision screen for ABB yet.
+- A failed apply answers `409` with `errors[].meta["change-request"]`
+  `{ id, status: "mislukt" }`. The frontend takes two steps on a request,
+  `POST /change-requests/:id/steps` with `step-type` `intrekking` (a held
+  request) and `hertoepassing` (a failed one); a `409` for a step the status
+  does not admit carries that status in `errors[].meta.status`, which the
+  frontend reads to treat a request withdrawn or applied meanwhile as done.
 
 ## Releasing a new version
 

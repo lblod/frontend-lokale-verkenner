@@ -8,6 +8,11 @@ import {
   createSecondaryContact,
 } from 'frontend-organization-portal/models/contact-point';
 
+/**
+ * The uuid of a change request the service kept.
+ */
+const REQUEST_ID = '19a13224-a9d8-4f94-ac7f-74568226d7c5';
+
 module(
   'Unit | Controller | organizations/organization/sites/new',
   function (hooks) {
@@ -27,10 +32,9 @@ module(
       this.submit = sinon.stub(this.changeRequests, 'submit');
       this.replaceWith = sinon.stub(this.router, 'replaceWith');
       this.refresh = sinon.stub(this.router, 'refresh');
-      this.warning = sinon.stub(
-        this.owner.lookup('service:toaster'),
-        'warning',
-      );
+      const toaster = this.owner.lookup('service:toaster');
+      this.warning = sinon.stub(toaster, 'warning');
+      this.success = sinon.stub(toaster, 'success');
       this.controller = this.owner.lookup(
         'controller:organizations/organization/sites/new',
       );
@@ -204,6 +208,91 @@ module(
           'org-1',
         ),
         'the list of sites is opened, not the form again',
+      );
+    });
+
+    test('it says why the site was not added and starts the form anew when the service holds the request', async function (assert) {
+      this.controller.isPrimarySite = true;
+      this.submit.rejects(
+        new ChangeRequestError('De wijziging werd niet doorgevoerd.', {
+          status: 201,
+          held: true,
+          requestId: REQUEST_ID,
+          conflicts: [
+            {
+              resource: { type: 'organizations', id: 'org-1' },
+              key: 'primary-site',
+              base: null,
+              current: { type: 'sites', id: 'site-9' },
+              proposed: {
+                type: 'sites',
+                id: '7d9e1c52-3b8a-4f0e-a6d4-2c5b9e8f1a03',
+              },
+              'competing-requests': [],
+            },
+          ],
+        }),
+      );
+      // Refreshing the route resets this controller, as its resetController
+      // does
+      const revision = this.controller.formRevision;
+      this.refresh.callsFake(async () => this.controller.reset());
+
+      await this.controller.createSiteTask.perform({ preventDefault() {} });
+
+      assert.true(
+        this.refresh.calledOnceWithExactly(
+          'organizations.organization.sites.new',
+        ),
+        'the form starts anew',
+      );
+      assert.strictEqual(
+        this.controller.formRevision,
+        revision + 1,
+        'the form is built anew',
+      );
+      assert.deepEqual(this.controller.heldRequest, {
+        id: REQUEST_ID,
+        fields: ['Primair correspondentieadres'],
+        reloadFailed: false,
+      });
+      assert.true(this.replaceWith.notCalled, 'the page stays');
+      assert.true(this.warning.notCalled);
+      assert.strictEqual(this.controller.saveError, null);
+      assert.false(this.controller.saveBlocked);
+    });
+
+    test('it blocks saving and offers to apply the request again when its apply failed', async function (assert) {
+      const { site } = this.controller.model;
+      this.submit.rejects(
+        new ChangeRequestError('De wijziging kon niet doorgevoerd worden.', {
+          status: 409,
+          applyFailed: true,
+          requestId: REQUEST_ID,
+        }),
+      );
+      const reapply = sinon.stub(this.changeRequests, 'reapply').resolves();
+
+      await this.controller.createSiteTask.perform({ preventDefault() {} });
+
+      assert.true(this.controller.saveBlocked);
+      assert.strictEqual(this.controller.failedRequestId, REQUEST_ID);
+      assert.true(site.isNew, 'the records are kept');
+
+      await this.controller.createSiteTask.perform({ preventDefault() {} });
+
+      assert.true(this.submit.calledOnce, 'a second "Voeg toe" sends nothing');
+
+      await this.controller.reapply.perform();
+
+      assert.true(reapply.calledOnceWithExactly(REQUEST_ID));
+      assert.true(this.success.calledOnce);
+      assert.true(
+        this.replaceWith.calledOnceWithExactly(
+          'organizations.organization.sites',
+          'org-1',
+        ),
+        'the list of sites: the uuid of the new site is not known here',
       );
     });
 

@@ -1,5 +1,6 @@
 import Route from '@ember/routing/route';
 import { service } from '@ember/service';
+import { findRecord } from '@warp-drive/legacy/compat/builders';
 import {
   createPrimaryContact,
   createSecondaryContact,
@@ -35,6 +36,17 @@ export default class OrganizationsOrganizationSitesSiteEditRoute extends Route {
   async model() {
     let { site } = this.modelFor('organizations.organization.sites.site');
 
+    // The organisation's sites as they are now: the page changes which site
+    // is primary, and its change request starts from these values (its
+    // base), also when a held save refreshes the page.
+    let { id: organizationId } = this.modelFor('organizations.organization');
+    let { content: organization } = await this.store.request(
+      findRecord('organization', organizationId, {
+        reload: true,
+        include: 'primary-site,sites',
+      }),
+    );
+
     let contacts = await site.contacts;
 
     let contact = findPrimaryContact(contacts);
@@ -46,8 +58,6 @@ export default class OrganizationsOrganizationSitesSiteEditRoute extends Route {
     if (!secondaryContact) {
       secondaryContact = createSecondaryContact(this.store);
     }
-
-    let organization = this.modelFor('organizations.organization');
 
     let address = await site.address;
 

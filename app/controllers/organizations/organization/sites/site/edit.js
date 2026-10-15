@@ -5,8 +5,20 @@ import { tracked } from '@glimmer/tracking';
 import { dropTask } from 'ember-concurrency';
 import { combineFullAddress } from 'frontend-organization-portal/models/address';
 import { setEmptyStringsToNull } from 'frontend-organization-portal/utils/empty-string-to-null';
-import { isLoaded } from 'frontend-organization-portal/utils/records';
+import {
+  hasUserInput,
+  isLoaded,
+} from 'frontend-organization-portal/utils/records';
 import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
+import {
+  ADDRESS_LABELS,
+  ORGANIZATION_SITE_LABELS,
+  PRIMARY_CONTACT_LABELS,
+  SECONDARY_CONTACT_LABELS,
+  SITE_LABELS,
+  heldRequestNotice,
+  reportHeldRequest,
+} from 'frontend-organization-portal/utils/change-request-conflicts';
 
 export default class OrganizationsOrganizationSitesSiteEditController extends Controller {
   @service router;
@@ -20,11 +32,35 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
    */
   @tracked saveError;
   /**
-   * Whether the last save ended without knowing whether the change was
-   * applied (a 5xx); a retry could apply it twice, so saving stays blocked
-   * until the page is reloaded.
+   * Whether saving is blocked until the page is reloaded: the last save
+   * ended without knowing whether the change was applied (a 5xx), and a
+   * retry could apply it twice; its apply failed (see `failedRequestId`); or
+   * it was held and the records could not be reloaded, so a new save would
+   * start from values that are not the current ones.
    */
   @tracked saveBlocked = false;
+  /**
+   * Set when the change-request service held the last save instead of
+   * applying it, because someone else changed the same data in the
+   * meantime: `{ id, fields, reloadFailed }`, the request and the labels of
+   * those fields (see `heldRequestNotice`). The form then shows the current
+   * values again; the request waits for a decision by ABB.
+   */
+  @tracked heldRequest = null;
+  /**
+   * The uuid of the request whose apply failed on the last save (a 409 with
+   * status mislukt). The service kept it, and the apply may have stopped
+   * half-way, leaving the fields it changes empty; a new save would start
+   * from the values the page loaded and conflict with that. Saving is
+   * blocked, `reapply` applies the kept request again.
+   */
+  @tracked failedRequestId = null;
+  /**
+   * Bumped once the records are reloaded after a held save, so that the
+   * template builds the form anew (`<Rebuild>`): some of its components (the
+   * address search) keep the values they were created with.
+   */
+  @tracked formRevision = 0;
 
   get isCurrentPrimarySite() {
     return this.model.site.id === this.model.currentPrimarySite?.id;
@@ -63,6 +99,7 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
       return;
     }
     this.saveError = null;
+    this.heldRequest = null;
 
     let { address, organization, contact, secondaryContact, site } = this.model;
 
@@ -84,8 +121,10 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
         records.push(setEmptyStringsToNull(address));
       }
 
+      // The route creates a contact point the site lacks; it is only added
+      // when the user filled it in.
       for (let contactPoint of [contact, secondaryContact]) {
-        if (contactPoint.hasDirtyAttributes) {
+        if (hasUserInput(contactPoint, ['type'])) {
           if (contactPoint.isNew) {
             (await site.contacts).push(contactPoint);
           }
@@ -152,10 +191,20 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
           );
           return;
         }
+        if (error.held) {
+          // Nothing is applied and the submitted records are back at the
+          // backend's state.
+          await this.showHeldRequest(
+            heldRequestNotice(error, this.fieldLabels()),
+          );
+          return;
+        }
         // The records keep their edits so the user can correct and retry,
-        // unless the outcome is unknown: a retry could apply the change twice.
+        // unless the outcome is unknown, a retry could apply the change
+        // twice, or the apply failed, which `reapply` retries.
         this.saveError = error.message;
-        this.saveBlocked = error.outcomeUnknown;
+        this.saveBlocked = error.outcomeUnknown || error.applyFailed;
+        this.failedRequestId = error.applyFailed ? error.requestId : null;
         return;
       }
 
@@ -166,11 +215,88 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
     }
   });
 
+  /**
+   * Apply the request whose apply failed on the last save again (a
+   * hertoepassing of what was submitted, see `failedRequestId`). Once it is
+   * applied the page is left, as after a save. Unless the service refuses
+   * it, it can be tried again; a refusal needs a reload.
+   */
+  reapply = dropTask(async () => {
+    const { site } = this.model;
+    this.saveError = null;
+
+    try {
+      await this.changeRequests.reapply(this.failedRequestId);
+    } catch (error) {
+      if (!(error instanceof ChangeRequestError)) {
+        throw error;
+      }
+      this.saveError = error.message;
+      if (error.refused) {
+        // Not to be tried again: the page must be reloaded
+        this.failedRequestId = null;
+      }
+      return;
+    }
+
+    // The records still hold the edits; the page of the site loads the
+    // applied state.
+    this.toaster.success(
+      'De wijziging is doorgevoerd.',
+      'Wijziging doorgevoerd',
+    );
+    this.router.refresh();
+    this.router.transitionTo('organizations.organization.sites.site', site.id);
+  });
+
+  /**
+   * Show the page anew after the change-request service held the save:
+   * refresh the site's route, whose model hook reloads the site with its
+   * address and contact points (also the ones the request did not contain;
+   * this route's model hook reloads the organisation's sites), build the
+   * form again from them and show the notice. Refreshing resets this
+   * controller (`resetController`), so the notice is set afterwards. When
+   * the refresh fails, the router shows the error page, where the notice
+   * would not be seen.
+   *
+   * @param {Object} heldRequest - see `heldRequest`
+   */
+  async showHeldRequest(heldRequest) {
+    try {
+      await this.router.refresh('organizations.organization.sites.site');
+    } catch (error) {
+      reportHeldRequest(this.toaster, error);
+      return;
+    }
+    this.formRevision += 1;
+    this.heldRequest = heldRequest;
+    this.saveBlocked = heldRequest.reloadFailed;
+  }
+
+  /**
+   * The records of the page with the labels it gives their fields, to name
+   * the fields of a held change request.
+   */
+  fieldLabels() {
+    const { site, address, contact, secondaryContact, organization } =
+      this.model;
+
+    return [
+      [site, SITE_LABELS],
+      [address, ADDRESS_LABELS],
+      [contact, PRIMARY_CONTACT_LABELS],
+      [secondaryContact, SECONDARY_CONTACT_LABELS],
+      [organization, ORGANIZATION_SITE_LABELS],
+    ];
+  }
+
   reset() {
     this.resetUnsavedRecords();
     this.isNoPrimarySiteErrorMessage = null;
     this.saveError = null;
     this.saveBlocked = false;
+    this.heldRequest = null;
+    this.failedRequestId = null;
   }
 
   resetUnsavedRecords() {

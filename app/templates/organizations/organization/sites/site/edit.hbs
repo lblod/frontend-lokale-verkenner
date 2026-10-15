@@ -18,7 +18,11 @@
             <AuButton
               @loading={{this.save.isRunning}}
               @loadingMessage="Opslaan"
-              @disabled={{or this.save.isRunning this.saveBlocked}}
+              @disabled={{or
+                this.save.isRunning
+                this.reapply.isRunning
+                this.saveBlocked
+              }}
               type="submit"
               form="edit-vestiging-form"
             >
@@ -27,89 +31,107 @@
           </AuButtonGroup>
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
           <Error::ChangeRequest @message={{this.saveError}} />
+          {{#if this.failedRequestId}}
+            <AuButton
+              @skin="link"
+              @loading={{this.reapply.isRunning}}
+              @loadingMessage="Opnieuw toepassen"
+              data-test-reapply
+              {{on "click" (perform this.reapply)}}
+            >
+              Opnieuw toepassen
+            </AuButton>
+          {{/if}}
           <ReportWrongData />
         </div>
       </:action>
     </PageHeader>
 
-    <form
-      id="edit-vestiging-form"
-      aria-label="Edit site"
-      {{on "submit" (perform this.save)}}
-    >
-      <div class="au-o-flow au-o-flow--large">
-        <EditCard>
-          <:title>Kerngegevens</:title>
-          <:card as |Card|>
-            <Card.Columns>
-              <:left as |Item|>
-                <Item
-                  @labelFor="site-type"
-                  @required={{true}}
-                  @errorMessage={{this.model.site.error.siteType.message}}
-                >
-                  <:label>Type vestiging</:label>
-                  <:content as |hasError|>
-                    <SiteTypeSelect
-                      @selected={{this.model.site.siteType}}
-                      @onChange={{fn (mut this.model.site.siteType)}}
-                      @organization={{this.model.organization}}
-                      @id="site-type"
-                      @error={{hasError}}
-                    />
-                  </:content>
-                </Item>
-                {{#if this.model.site.isOtherSite}}
-                  <Item @labelFor="site-type-name">
-                    <:label>Naam</:label>
-                    <:content>
-                      <AuInput
-                        @selected={{this.model.site.siteTypeName}}
-                        {{on "input" this.setSiteTypeName}}
-                        value={{this.model.site.siteTypeName}}
-                        @width="block"
-                        maxlength="50"
+    <Error::ChangeRequestHeld @held={{this.heldRequest}}>
+      Het formulier toont de gegevens zoals ze nu opgeslagen zijn.
+    </Error::ChangeRequestHeld>
+
+    <Rebuild @key={{this.formRevision}}>
+      <form
+        id="edit-vestiging-form"
+        aria-label="Edit site"
+        {{on "submit" (perform this.save)}}
+      >
+        <div class="au-o-flow au-o-flow--large">
+          <EditCard>
+            <:title>Kerngegevens</:title>
+            <:card as |Card|>
+              <Card.Columns>
+                <:left as |Item|>
+                  <Item
+                    @labelFor="site-type"
+                    @required={{true}}
+                    @errorMessage={{this.model.site.error.siteType.message}}
+                  >
+                    <:label>Type vestiging</:label>
+                    <:content as |hasError|>
+                      <SiteTypeSelect
+                        @selected={{this.model.site.siteType}}
+                        @onChange={{fn (mut this.model.site.siteType)}}
+                        @organization={{this.model.organization}}
+                        @id="site-type"
+                        @error={{hasError}}
                       />
                     </:content>
                   </Item>
-                {{/if}}
-              </:left>
-              <:right as |Item|>
-                <Item @errorMessage={{this.isNoPrimarySiteErrorMessage}}>
-                  <:label>Primair correspondentieadres</:label>
-                  <:content>
-                    <AuRadioGroup
-                      @alignment="inline"
-                      @name="is-primary-site"
-                      @selected={{this.isPrimarySite}}
-                      @onChange={{this.updateIsPrimarySite}}
-                      as |Group|
-                    >
-                      <Group.Radio @value={{true}}>Ja</Group.Radio>
-                      <Group.Radio @value={{false}}>Nee</Group.Radio>
-                    </AuRadioGroup>
-                  </:content>
-                </Item>
-              </:right>
-            </Card.Columns>
-          </:card>
-        </EditCard>
+                  {{#if this.model.site.isOtherSite}}
+                    <Item @labelFor="site-type-name">
+                      <:label>Naam</:label>
+                      <:content>
+                        <AuInput
+                          @selected={{this.model.site.siteTypeName}}
+                          {{on "input" this.setSiteTypeName}}
+                          value={{this.model.site.siteTypeName}}
+                          @width="block"
+                          maxlength="50"
+                        />
+                      </:content>
+                    </Item>
+                  {{/if}}
+                </:left>
+                <:right as |Item|>
+                  <Item @errorMessage={{this.isNoPrimarySiteErrorMessage}}>
+                    <:label>Primair correspondentieadres</:label>
+                    <:content>
+                      <AuRadioGroup
+                        @alignment="inline"
+                        @name="is-primary-site"
+                        @selected={{this.isPrimarySite}}
+                        @onChange={{this.updateIsPrimarySite}}
+                        as |Group|
+                      >
+                        <Group.Radio @value={{true}}>Ja</Group.Radio>
+                        <Group.Radio @value={{false}}>Nee</Group.Radio>
+                      </AuRadioGroup>
+                    </:content>
+                  </Item>
+                </:right>
+              </Card.Columns>
+            </:card>
+          </EditCard>
 
-        <Site::ContactEditCard
-          @address={{this.model.address}}
-          @primaryContact={{this.model.contact}}
-          @secondaryContact={{this.model.secondaryContact}}
-          @isAddressSearchEnabledInitially={{if
-            (or
-              (not this.model.address.id) this.model.address.addressRegisterUri
-            )
-            true
-            false
-          }}
-        >
-          <:title>Contactgegevens</:title>
-        </Site::ContactEditCard>
-      </div>
-    </form>
+          <Site::ContactEditCard
+            @address={{this.model.address}}
+            @primaryContact={{this.model.contact}}
+            @secondaryContact={{this.model.secondaryContact}}
+            @isAddressSearchEnabledInitially={{if
+              (or
+                (not this.model.address.id)
+                this.model.address.addressRegisterUri
+              )
+              true
+              false
+            }}
+          >
+            <:title>Contactgegevens</:title>
+          </Site::ContactEditCard>
+        </div>
+      </form>
+    </Rebuild>
   </div>
 </div>

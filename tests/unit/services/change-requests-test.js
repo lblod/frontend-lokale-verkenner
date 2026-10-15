@@ -1,8 +1,10 @@
 import { module, test } from 'qunit';
 import sinon from 'sinon';
 import { pluralize } from '@warp-drive/utilities/string';
+import { findRecord } from '@warp-drive/legacy/compat/builders';
 import { setupTest } from 'frontend-organization-portal/tests/helpers';
 import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
+import { setEmptyStringsToNull } from 'frontend-organization-portal/utils/empty-string-to-null';
 import CoreDataEditRoute from 'frontend-organization-portal/routes/organizations/organization/core-data/edit';
 import { ID_NAME } from 'frontend-organization-portal/models/identifier';
 import { CLASSIFICATION } from 'frontend-organization-portal/models/administrative-unit-classification-code';
@@ -13,6 +15,10 @@ import {
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/**
+ * The uuid of a change request the service kept.
+ */
+const REQUEST_ID = '25e29be4-7c4e-4044-9357-2196fa23a17e';
 
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
@@ -118,6 +124,22 @@ module('Unit | Service | change-requests', function (hooks) {
   }
 
   /**
+   * Load a record as the pages do: through the adapter and the serializer,
+   * with its transforms, from the document the backend sends.
+   */
+  async function loadRecord(store, adapter, modelName, document) {
+    const stub = sinon.stub(adapter, 'findRecord').resolves(document);
+    try {
+      const { content } = await store.request(
+        findRecord(modelName, document.data.id),
+      );
+      return content;
+    } finally {
+      stub.restore();
+    }
+  }
+
+  /**
    * Answer the reloads with a minimal applied state.
    */
   function acceptReloads(adapter) {
@@ -129,6 +151,58 @@ module('Unit | Service | change-requests', function (hooks) {
   }
 
   module('submit', function () {
+    test('when the save replaced earlier pending requests it tells the user they were withdrawn, and says nothing otherwise', async function (assert) {
+      const toaster = this.owner.lookup('service:toaster');
+      const success = sinon.stub(toaster, 'success');
+      acceptReloads(this.adapter);
+      const answer = (superseded) =>
+        jsonResponse(201, {
+          data: {
+            type: 'change-requests',
+            id: 'request-2',
+            attributes: {
+              status: 'goedgekeurd',
+              aggregate: 'organization-core-data',
+              lids: {},
+              ...(superseded ? { superseded } : {}),
+            },
+          },
+        });
+      const organization = () => {
+        const [record] = this.store.push({
+          data: [
+            {
+              type: 'organization',
+              id: 'org-1',
+              attributes: { name: 'Gemeente Test' },
+            },
+          ],
+        });
+        record.name = 'Stad Test';
+        return record;
+      };
+
+      this.fetch.resolves(answer(['request-1']));
+      await this.service.submit('organization-core-data', 'org-1', [
+        organization(),
+      ]);
+      assert.true(success.calledOnce);
+      assert.strictEqual(
+        success.firstCall.args[1],
+        'Eerdere aanvraag vervangen',
+      );
+      assert.strictEqual(
+        success.firstCall.args[0],
+        'Deze wijziging vervangt je eerdere aanvraag die nog op een beslissing van ABB wachtte. Die aanvraag is ingetrokken.',
+      );
+
+      this.fetch.resolves(answer(undefined));
+      await this.service.submit('organization-core-data', 'org-1', [
+        organization(),
+      ]);
+      assert.true(success.calledOnce, 'no message when nothing was replaced');
+    });
+
     test('it posts the aggregate with lids for the new records and reloads them under the minted ids', async function (assert) {
       const { organization, site, address, contact, secondaryContact } =
         newSiteForOrganization(this.store);
@@ -532,6 +606,690 @@ module('Unit | Service | change-requests', function (hooks) {
       assert.true(error.outcomeUnknown);
       assert.true(error.message.includes('Herlaad de pagina'));
       assert.true(site.isNew, 'the edits are kept');
+    });
+  });
+
+  module('base values', function () {
+    /**
+     * A persisted organisation with its primary site, legal form and status,
+     * as the kerngegevens route would have loaded it, and a second site that
+     * a test can link to it.
+     */
+    function loadOrganization(store) {
+      const [organization, , otherSite] = store.push({
+        data: [
+          {
+            type: 'organization',
+            id: 'org-1',
+            attributes: {
+              name: 'Gemeente Test',
+              legalName: 'Gemeente Test',
+              alternativeName: ['Test'],
+              purpose: null,
+            },
+            relationships: {
+              primarySite: { data: { type: 'site', id: 'site-1' } },
+              sites: { data: [{ type: 'site', id: 'site-1' }] },
+              legalForm: { data: { type: 'concept', id: 'legal-form-1' } },
+              organizationStatus: {
+                data: { type: 'organization-status-code', id: 'status-1' },
+              },
+            },
+          },
+          { type: 'site', id: 'site-1', attributes: {} },
+          { type: 'site', id: 'site-2', attributes: {} },
+          { type: 'concept', id: 'legal-form-1', attributes: {} },
+          { type: 'organization-status-code', id: 'status-1', attributes: {} },
+        ],
+      });
+      return { organization, otherSite };
+    }
+
+    function postedOperations(fetchStub) {
+      return JSON.parse(fetchStub.firstCall.args[1].body).data.attributes
+        .operations;
+    }
+
+    test('an update carries the loaded value of every attribute it sends: the old value of a changed one, the current value of an unchanged one', async function (assert) {
+      const { organization } = loadOrganization(this.store);
+      const contact = await loadRecord(
+        this.store,
+        this.adapter,
+        'contact-point',
+        {
+          data: {
+            type: 'contact-points',
+            id: 'contact-1',
+            attributes: { telephone: 'tel:+3290000000', type: 'Primary' },
+          },
+        },
+      );
+      assert.strictEqual(contact.telephone, '+3290000000');
+      organization.legalName = 'Stad Test';
+      organization.alternativeName = ['Test', 'Stad Test'];
+      contact.telephone = '+3291111111';
+      acceptRequests(this.fetch, {});
+      acceptReloads(this.adapter);
+
+      await this.service.submit('organization-core-data', 'org-1', [
+        contact,
+        organization,
+      ]);
+
+      const [contactOp, organizationOp] = postedOperations(this.fetch).map(
+        ({ data }) => data,
+      );
+      assert.deepEqual(
+        organizationOp.meta.base.attributes,
+        {
+          name: 'Gemeente Test',
+          'legal-name': 'Gemeente Test',
+          'alternative-name': ['Test'],
+          'expected-end-date': null,
+          purpose: null,
+        },
+        'the legal and alternative names as loaded, the other attributes as they are',
+      );
+      assert.deepEqual(
+        Object.keys(organizationOp.meta.base.attributes),
+        Object.keys(organizationOp.attributes),
+        'a base for every attribute the update sends, under the same key',
+      );
+      assert.strictEqual(organizationOp.attributes['legal-name'], 'Stad Test');
+      assert.strictEqual(
+        contactOp.meta.base.attributes.telephone,
+        'tel:+3290000000',
+        'the base goes through the transform of the attribute, as the proposal does',
+      );
+      assert.strictEqual(contactOp.attributes.telephone, 'tel:+3291111111');
+      assert.strictEqual(contactOp.meta.base.attributes.type, 'Primary');
+    });
+
+    test('the base of a changed telephone number is the form the backend sent, also when that lacks "tel:"', async function (assert) {
+      const load = (id, telephone) =>
+        loadRecord(this.store, this.adapter, 'contact-point', {
+          data: {
+            type: 'contact-points',
+            id,
+            attributes: { telephone, type: 'Primary' },
+          },
+        });
+      const prefixed = await load('contact-1', 'tel:+3290000000');
+      const bare = await load('contact-2', '1770');
+      const empty = await load('contact-3', '');
+      assert.strictEqual(bare.telephone, '1770', 'shown as it is stored');
+      prefixed.telephone = '+3291111111';
+      bare.telephone = '+3227001770';
+      empty.telephone = '+3227001771';
+      acceptRequests(this.fetch, {});
+      acceptReloads(this.adapter);
+
+      await this.service.submit('site', 'org-1', [prefixed, bare, empty]);
+
+      const telephones = postedOperations(this.fetch).map(({ data }) => [
+        data.attributes.telephone,
+        data.meta.base.attributes.telephone,
+      ]);
+      assert.deepEqual(
+        telephones,
+        [
+          ['tel:+3291111111', 'tel:+3290000000'],
+          ['tel:+3227001770', '1770'],
+          ['tel:+3227001771', ''],
+        ],
+        'the proposal goes through the transform, the base is the value the service holds, which it compares exactly',
+      );
+    });
+
+    test('an unchanged telephone number stored without "tel:" or as "" has its proposal as its base, so it is not written', async function (assert) {
+      const load = (id, telephone) =>
+        loadRecord(this.store, this.adapter, 'contact-point', {
+          data: {
+            type: 'contact-points',
+            id,
+            attributes: { telephone, email: 'info@gent.be', type: 'Primary' },
+          },
+        });
+      const bare = await load('contact-1', '1770');
+      const empty = await load('contact-2', '');
+      bare.email = 'post@gent.be';
+      empty.email = 'post@gent.be';
+      // The pages write an empty field as null
+      setEmptyStringsToNull(empty);
+      acceptRequests(this.fetch, {});
+      acceptReloads(this.adapter);
+
+      await this.service.submit('site', 'org-1', [bare, empty]);
+
+      const [bareOp, emptyOp] = postedOperations(this.fetch).map(
+        ({ data }) => data,
+      );
+      assert.strictEqual(bareOp.attributes.telephone, 'tel:1770');
+      assert.strictEqual(
+        bareOp.meta.base.attributes.telephone,
+        'tel:1770',
+        'base and proposal agree, so the service does not write the number',
+      );
+      assert.strictEqual(bareOp.meta.base.attributes.email, 'info@gent.be');
+      assert.strictEqual(emptyOp.attributes.telephone, null);
+      assert.strictEqual(
+        emptyOp.meta.base.attributes.telephone,
+        null,
+        'an empty number the page wrote as null is no change either',
+      );
+    });
+
+    test('the base of a relationship is its remote state', async function (assert) {
+      const { organization, otherSite } = loadOrganization(this.store);
+      organization.primarySite = otherSite;
+      (await organization.sites).push(otherSite);
+      organization.legalForm = null;
+      acceptRequests(this.fetch, {});
+      acceptReloads(this.adapter);
+
+      await this.service.submit('organization-core-data', 'org-1', [
+        organization,
+      ]);
+
+      const [{ data }] = postedOperations(this.fetch);
+      const base = data.meta.base.relationships;
+      assert.deepEqual(data.relationships['primary-site'].data, {
+        type: 'sites',
+        id: 'site-2',
+      });
+      assert.deepEqual(
+        base['primary-site'].data,
+        { type: 'sites', id: 'site-1' },
+        'a changed to-one: the record it pointed at',
+      );
+      assert.deepEqual(data.relationships.sites.data, [
+        { type: 'sites', id: 'site-1' },
+        { type: 'sites', id: 'site-2' },
+      ]);
+      assert.deepEqual(
+        base.sites.data,
+        [{ type: 'sites', id: 'site-1' }],
+        'a changed to-many: the records it held',
+      );
+      assert.strictEqual(data.relationships['legal-form'].data, null);
+      assert.deepEqual(
+        base['legal-form'].data,
+        { type: 'concepts', id: 'legal-form-1' },
+        'a cleared to-one: the record it pointed at',
+      );
+      assert.deepEqual(
+        base['organization-status'],
+        data.relationships['organization-status'],
+        'an unchanged relationship: its current value',
+      );
+      assert.deepEqual(
+        Object.keys(base).sort(),
+        Object.keys(data.relationships).sort(),
+        'a base for every relationship the update sends',
+      );
+    });
+
+    test('the base of a to-one that pointed at nothing is null, also when the page links a new record by lid', async function (assert) {
+      const { organization, site, address, contact, secondaryContact } =
+        newSiteForOrganization(this.store);
+      organization.primarySite = site;
+      acceptRequests(this.fetch, {});
+      acceptReloads(this.adapter);
+
+      await this.service.submit('site', 'org-1', [
+        contact,
+        secondaryContact,
+        address,
+        site,
+        organization,
+      ]);
+
+      const organizationOp = postedOperations(this.fetch).at(-1).data;
+      assert.deepEqual(
+        Object.keys(organizationOp.relationships['primary-site'].data),
+        ['type', 'lid'],
+      );
+      assert.deepEqual(organizationOp.meta.base.relationships, {
+        'primary-site': { data: null },
+        sites: { data: [] },
+      });
+    });
+
+    test('creates and deletes carry no base', async function (assert) {
+      const { organization, site, address, contact, secondaryContact } =
+        newSiteForOrganization(this.store);
+      (await organization.sites).push(site);
+      const [oldContact] = this.store.push({
+        data: [
+          {
+            type: 'contact-point',
+            id: 'contact-old',
+            attributes: { email: 'oud@gent.be', type: 'Secondary' },
+          },
+        ],
+      });
+      oldContact.deleteRecord();
+      acceptRequests(this.fetch, {});
+      acceptReloads(this.adapter);
+
+      await this.service.submit('site', 'org-1', [
+        contact,
+        secondaryContact,
+        address,
+        site,
+        oldContact,
+        organization,
+      ]);
+
+      const operations = postedOperations(this.fetch);
+      assert.deepEqual(
+        operations.map(({ op, data }) => [op, Boolean(data.meta)]),
+        [
+          ['create', false],
+          ['create', false],
+          ['create', false],
+          ['create', false],
+          ['delete', false],
+          ['update', true],
+        ],
+        'only the update carries meta.base',
+      );
+    });
+  });
+
+  module('held requests', function () {
+    const CONFLICTS = [
+      {
+        resource: { type: 'organizations', id: 'org-1' },
+        key: 'sites',
+        base: [],
+        current: [{ type: 'sites', id: 'site-9' }],
+        proposed: [
+          { type: 'sites', id: 'b3c5e9d2-1f4a-4c1e-9a77-0d2b8e6f4a10' },
+        ],
+        'competing-requests': [],
+      },
+    ];
+
+    function holdRequests(fetchStub, conflicts) {
+      fetchStub.resolves(
+        jsonResponse(201, {
+          data: {
+            type: 'change-requests',
+            id: REQUEST_ID,
+            attributes: { status: 'ingediend', aggregate: 'site', conflicts },
+          },
+        }),
+      );
+    }
+
+    test('it discards the local changes, unloads the new records and reloads the others when the service holds the request', async function (assert) {
+      const { organization, site, address, contact, secondaryContact } =
+        newSiteForOrganization(this.store);
+      (await organization.sites).push(site);
+      organization.name = 'Stad Gent';
+      holdRequests(this.fetch, CONFLICTS);
+      // The backend answers with the current state: someone else added a site
+      sinon
+        .stub(this.adapter, 'findRecord')
+        .callsFake((store, schema, id, snapshot) => {
+          assert.step(
+            `reload ${schema.modelName} ${id} include=${snapshot.include}`,
+          );
+          return Promise.resolve({
+            data: {
+              type: 'organizations',
+              id,
+              attributes: { name: 'Gemeente Test' },
+              relationships: {
+                sites: { data: [{ type: 'sites', id: 'site-9' }] },
+              },
+            },
+            included: [{ type: 'sites', id: 'site-9', attributes: {} }],
+          });
+        });
+
+      let error;
+      try {
+        await this.service.submit('site', 'org-1', [
+          contact,
+          secondaryContact,
+          address,
+          site,
+          organization,
+        ]);
+      } catch (e) {
+        error = e;
+      }
+
+      assert.true(error instanceof ChangeRequestError);
+      assert.true(error.held);
+      assert.false(error.applied);
+      assert.false(error.outcomeUnknown);
+      assert.false(error.applyFailed);
+      assert.false(error.reloadFailed);
+      assert.strictEqual(error.status, 201);
+      assert.strictEqual(
+        error.requestId,
+        REQUEST_ID,
+        'the id of the held request, to withdraw it',
+      );
+      assert.deepEqual(error.conflicts, CONFLICTS);
+      assert.true(error.message.includes('wacht op een beslissing van ABB'));
+      assert.verifySteps(
+        ['reload organization org-1 include=sites'],
+        'only the organisation exists on the server; it is reloaded with the relationship the request changed',
+      );
+      for (const record of [site, address, contact, secondaryContact]) {
+        assert.true(
+          record.isDestroying,
+          `the new ${record.constructor.modelName} is unloaded: it exists in the request only`,
+        );
+      }
+      assert.false(organization.hasDirtyAttributes);
+      assert.strictEqual(organization.name, 'Gemeente Test');
+      assert.deepEqual(
+        organization.hasMany('sites').ids(),
+        ['site-9'],
+        'the page sees the current sites',
+      );
+    });
+
+    test('a held request is reported as held when the records cannot be reloaded', async function (assert) {
+      const { organization, site, address, contact, secondaryContact } =
+        newSiteForOrganization(this.store);
+      (await organization.sites).push(site);
+      holdRequests(this.fetch, CONFLICTS);
+      const reloadError = new Error('502 Bad Gateway');
+      sinon.stub(this.adapter, 'findRecord').rejects(reloadError);
+      const logged = sinon.stub(console, 'error');
+
+      let error;
+      try {
+        await this.service.submit('site', 'org-1', [
+          contact,
+          secondaryContact,
+          address,
+          site,
+          organization,
+        ]);
+      } catch (e) {
+        error = e;
+      }
+
+      assert.true(error instanceof ChangeRequestError);
+      assert.true(error.held, 'nothing is applied, the request waits');
+      assert.false(error.applied);
+      assert.true(
+        error.reloadFailed,
+        'the page holds the loaded values, not the current ones',
+      );
+      assert.strictEqual(error.cause, reloadError);
+      assert.true(
+        logged.calledWith(sinon.match.string, reloadError),
+        'the reason is logged',
+      );
+      assert.strictEqual(error.requestId, REQUEST_ID);
+      assert.true(site.isDestroying);
+      assert.deepEqual(
+        organization.hasMany('sites').ids(),
+        [],
+        'the local changes are discarded all the same',
+      );
+    });
+
+    test('a request held without conflicts is held all the same', async function (assert) {
+      const organization = this.store.push({
+        data: {
+          type: 'organization',
+          id: 'org-1',
+          attributes: { name: 'Gemeente Test' },
+        },
+      });
+      organization.name = 'Stad Test';
+      holdRequests(this.fetch, undefined);
+      acceptReloads(this.adapter);
+
+      let error;
+      try {
+        await this.service.submit('organization-core-data', 'org-1', [
+          organization,
+        ]);
+      } catch (e) {
+        error = e;
+      }
+
+      assert.true(error.held);
+      assert.deepEqual(error.conflicts, []);
+      assert.false(organization.hasDirtyAttributes);
+    });
+  });
+
+  module('failed applies', function () {
+    test('a 409 for an apply that failed carries the id of the kept request and a message for the user, and keeps the edits', async function (assert) {
+      const organization = this.store.push({
+        data: {
+          type: 'organization',
+          id: 'org-1',
+          attributes: { name: 'Gemeente Test' },
+        },
+      });
+      organization.name = 'Stad Test';
+      this.fetch.resolves(
+        jsonResponse(409, {
+          errors: [
+            {
+              status: '409',
+              title: 'Applying the change request failed',
+              detail: `Virtuoso 42000 Error. The request is kept with status mislukt; a hertoepassing (POST /change-requests/${REQUEST_ID}/steps) applies its stored versions again.`,
+              meta: { 'change-request': { id: REQUEST_ID, status: 'mislukt' } },
+            },
+          ],
+        }),
+      );
+
+      let error;
+      try {
+        await this.service.submit('organization-core-data', 'org-1', [
+          organization,
+        ]);
+      } catch (e) {
+        error = e;
+      }
+
+      assert.true(error instanceof ChangeRequestError);
+      assert.true(error.applyFailed);
+      assert.strictEqual(error.requestId, REQUEST_ID);
+      assert.strictEqual(error.status, 409);
+      assert.false(error.held);
+      assert.false(error.applied);
+      assert.false(error.outcomeUnknown);
+      assert.true(
+        error.message.startsWith(
+          'De wijziging kon niet doorgevoerd worden: het toepassen ervan mislukte.',
+        ),
+        'a message in Dutch instead of the detail of the service',
+      );
+      assert.true(organization.hasDirtyAttributes, 'the edits are kept');
+      assert.strictEqual(organization.name, 'Stad Test');
+    });
+
+    test('another 409 is a refusal without a request to apply again', async function (assert) {
+      const organization = this.store.push({
+        data: {
+          type: 'organization',
+          id: 'org-1',
+          attributes: { name: 'Gemeente Test' },
+        },
+      });
+      organization.name = 'Stad Test';
+      this.fetch.resolves(
+        jsonResponse(409, {
+          errors: [{ status: '409', title: 'Conflict', detail: 'Bezet.' }],
+        }),
+      );
+
+      let error;
+      try {
+        await this.service.submit('organization-core-data', 'org-1', [
+          organization,
+        ]);
+      } catch (e) {
+        error = e;
+      }
+
+      assert.false(error.applyFailed);
+      assert.strictEqual(error.requestId, null);
+      assert.strictEqual(error.message, 'Bezet.');
+    });
+  });
+
+  module('steps', function () {
+    function stepOf(fetchStub) {
+      const [url, options] = fetchStub.lastCall.args;
+      return { url, options, document: JSON.parse(options.body) };
+    }
+
+    function stepError(status, meta) {
+      return jsonResponse(status, {
+        errors: [
+          {
+            status: String(status),
+            title: 'The change request cannot take this step',
+            meta,
+          },
+        ],
+      });
+    }
+
+    async function rejection(promise) {
+      try {
+        await promise;
+      } catch (error) {
+        return error;
+      }
+      return null;
+    }
+
+    test('withdraw takes an intrekking step on the request', async function (assert) {
+      this.fetch.resolves(
+        jsonResponse(201, {
+          data: {
+            type: 'change-requests',
+            id: REQUEST_ID,
+            attributes: { status: 'ingetrokken' },
+          },
+        }),
+      );
+
+      await this.service.withdraw(REQUEST_ID);
+
+      const { url, options, document } = stepOf(this.fetch);
+      assert.strictEqual(url, `/change-requests/${REQUEST_ID}/steps`);
+      assert.strictEqual(options.method, 'POST');
+      assert.strictEqual(
+        options.headers['Content-Type'],
+        'application/vnd.api+json',
+      );
+      assert.deepEqual(document, {
+        data: {
+          type: 'change-request-steps',
+          attributes: { 'step-type': 'intrekking' },
+        },
+      });
+    });
+
+    test('withdraw accepts a request that is withdrawn already and says why it cannot withdraw one ABB decided on', async function (assert) {
+      this.fetch.resolves(
+        stepError(409, { status: 'ingetrokken', 'step-type': 'intrekking' }),
+      );
+      assert.strictEqual(
+        await this.service.withdraw(REQUEST_ID),
+        undefined,
+        'withdrawn already: resolves',
+      );
+
+      this.fetch.resolves(
+        stepError(409, { status: 'goedgekeurd', 'step-type': 'intrekking' }),
+      );
+      let error = await rejection(this.service.withdraw(REQUEST_ID));
+      assert.true(error instanceof ChangeRequestError);
+      assert.strictEqual(
+        error.message,
+        'ABB heeft je aanvraag intussen goedgekeurd; ze kan niet meer ingetrokken worden.',
+      );
+
+      this.fetch.resolves(stepError(403, { rule: null, rules: [] }));
+      error = await rejection(this.service.withdraw(REQUEST_ID));
+      assert.strictEqual(error.message, 'Je mag deze aanvraag niet intrekken.');
+
+      this.fetch.rejects(new TypeError('Failed to fetch'));
+      error = await rejection(this.service.withdraw(REQUEST_ID));
+      assert.true(error instanceof ChangeRequestError);
+      assert.true(error.message.startsWith('De intrekking kon niet verstuurd'));
+    });
+
+    test('reapply takes a hertoepassing step on the request', async function (assert) {
+      this.fetch.resolves(
+        jsonResponse(201, {
+          data: {
+            type: 'change-requests',
+            id: REQUEST_ID,
+            attributes: { status: 'goedgekeurd' },
+          },
+        }),
+      );
+
+      await this.service.reapply(REQUEST_ID);
+
+      const { url, document } = stepOf(this.fetch);
+      assert.strictEqual(url, `/change-requests/${REQUEST_ID}/steps`);
+      assert.deepEqual(document.data.attributes, {
+        'step-type': 'hertoepassing',
+      });
+    });
+
+    test('reapply tells a request that failed again or did not get through from one the service refuses', async function (assert) {
+      this.fetch.resolves(
+        stepError(409, {
+          'change-request': { id: REQUEST_ID, status: 'mislukt' },
+        }),
+      );
+      let error = await rejection(this.service.reapply(REQUEST_ID));
+      assert.true(error.applyFailed, 'failed once more: it can be tried again');
+      assert.false(error.refused);
+      assert.strictEqual(error.requestId, REQUEST_ID);
+
+      this.fetch.resolves(new Response('Bad Gateway', { status: 502 }));
+      error = await rejection(this.service.reapply(REQUEST_ID));
+      assert.true(error.outcomeUnknown, 'a 5xx: it can be tried again');
+      assert.false(error.refused);
+
+      this.fetch.resolves(
+        stepError(409, { status: 'goedgekeurd', 'step-type': 'hertoepassing' }),
+      );
+      assert.strictEqual(
+        await this.service.reapply(REQUEST_ID),
+        undefined,
+        'applied meanwhile, e.g. from another tab: resolves',
+      );
+
+      this.fetch.resolves(
+        stepError(409, {
+          'change-request': {
+            id: '47b4a8ba-1229-409e-a326-ac4250defec4',
+            status: 'goedgekeurd',
+          },
+        }),
+      );
+      error = await rejection(this.service.reapply(REQUEST_ID));
+      assert.true(error.refused, 'refused: the page must be reloaded');
+      assert.false(error.applyFailed);
+      assert.false(error.outcomeUnknown);
+      assert.strictEqual(
+        error.message,
+        'Intussen werd een andere wijziging van deze organisatie doorgevoerd, daarom wordt je aanvraag niet meer toegepast. Herlaad de pagina en voer je wijziging opnieuw in.',
+      );
     });
   });
 

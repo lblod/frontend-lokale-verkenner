@@ -14,6 +14,11 @@ import {
   createSecondaryContact,
 } from 'frontend-organization-portal/models/contact-point';
 
+/**
+ * The uuid of a change request the service kept.
+ */
+const REQUEST_ID = '6b8ed552-2bfb-417f-bf1e-4a1da50781aa';
+
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
     status,
@@ -42,10 +47,9 @@ module(
       const router = this.owner.lookup('service:router');
       this.refresh = sinon.stub(router, 'refresh');
       this.transitionTo = sinon.stub(router, 'transitionTo');
-      this.warning = sinon.stub(
-        this.owner.lookup('service:toaster'),
-        'warning',
-      );
+      const toaster = this.owner.lookup('service:toaster');
+      this.warning = sinon.stub(toaster, 'warning');
+      this.success = sinon.stub(toaster, 'success');
       this.fetch = sinon.stub(window, 'fetch').resolves(new Response(null));
       this.controller = this.owner.lookup(
         'controller:organizations/organization/core-data/edit',
@@ -167,6 +171,101 @@ module(
       };
     };
 
+    /**
+     * The model of the route for a municipality with a primary site, its
+     * address and primary contact point, but without a secondary contact
+     * point and without a SharePoint identifier: the route creates those as
+     * placeholders (and adds the identifier to `organization.identifiers`).
+     */
+    this.coreDataModelWithPlaceholders = async function () {
+      const [organization, site, address, contact] = this.store.push({
+        data: [
+          {
+            type: 'organization',
+            id: 'org-2',
+            attributes: { name: 'Gemeente Twee', legalName: 'Gemeente Twee' },
+            relationships: {
+              classification: {
+                data: {
+                  type: 'administrative-unit-classification-code',
+                  id: CLASSIFICATION.MUNICIPALITY.id,
+                },
+              },
+              organizationStatus: {
+                data: { type: 'organization-status-code', id: 'status-1' },
+              },
+              legalForm: { data: { type: 'concept', id: 'legal-form-1' } },
+              identifiers: {
+                data: [{ type: 'identifier', id: 'identifier-kbo' }],
+              },
+              primarySite: { data: { type: 'site', id: 'site-2' } },
+              sites: { data: [] },
+              contentThemes: { data: [] },
+              additionalQualifications: { data: [] },
+            },
+          },
+          {
+            type: 'site',
+            id: 'site-2',
+            relationships: {
+              address: { data: { type: 'address', id: 'address-2' } },
+              contacts: {
+                data: [{ type: 'contact-point', id: 'contact-2' }],
+              },
+            },
+          },
+          {
+            type: 'address',
+            id: 'address-2',
+            attributes: {
+              street: 'Markt',
+              number: '1',
+              postcode: '9300',
+              municipality: 'Aalst',
+              province: 'Oost-Vlaanderen',
+              country: 'België',
+              fullAddress: 'Markt 1, 9300 Aalst, België',
+            },
+          },
+          {
+            type: 'contact-point',
+            id: 'contact-2',
+            attributes: { email: 'info@aalst.be', type: 'Primary' },
+          },
+        ],
+      });
+      this.owner.register(
+        'route:organizations/organization/core-data/edit',
+        EditRoute,
+      );
+      const route = this.owner.lookup(
+        'route:organizations/organization/core-data/edit',
+      );
+      const identifiers = await organization.identifiers;
+      identifiers.push(...route.createMissingIdentifiers(identifiers));
+      const identifierKBO = identifiers.find(
+        ({ idName }) => idName === ID_NAME.KBO,
+      );
+      const identifierSharepoint = identifiers.find(
+        ({ idName }) => idName === ID_NAME.SHAREPOINT,
+      );
+
+      return {
+        organization,
+        site,
+        address,
+        contact,
+        secondaryContact: createSecondaryContact(this.store),
+        identifierKBO,
+        identifierSharepoint,
+        structuredIdentifierKBO: await identifierKBO.structuredIdentifier,
+        structuredIdentifierSharepoint:
+          await identifierSharepoint.structuredIdentifier,
+        regions: [],
+        vendors: [],
+      };
+    };
+
     test('it submits the identifiers and the organisation as one change request', async function (assert) {
       const {
         organization,
@@ -261,7 +360,6 @@ module(
         [
           address,
           contact,
-          secondaryContact,
           primarySite,
           structuredIdentifierKBO,
           identifierKBO,
@@ -269,13 +367,13 @@ module(
           identifierSharepoint,
           organization,
         ],
-        'dependencies come first: the address and contact points, then the site, then the organisation',
+        'dependencies come first: the address and the contact point, then the site, then the organisation; the secondary contact point the user left empty stays out',
       );
       assert.strictEqual(primarySite.belongsTo('address').value(), address);
       assert.deepEqual(primarySite.hasMany('contacts').value().slice(), [
         contact,
-        secondaryContact,
       ]);
+      assert.true(secondaryContact.isNew);
       assert.strictEqual(
         address.fullAddress,
         'Kerkstraat 1, 9000 Gent, België',
@@ -417,6 +515,325 @@ module(
           'org-1',
         ),
       );
+    });
+
+    test('it names the fields someone else changed and rebuilds the form when the service holds the request', async function (assert) {
+      const { organization, structuredIdentifierSharepoint } =
+        this.controller.model;
+      organization.legalName = 'Stad Test';
+      structuredIdentifierSharepoint.localId = '42';
+      this.submit.rejects(
+        new ChangeRequestError('De wijziging werd niet doorgevoerd.', {
+          status: 201,
+          held: true,
+          requestId: REQUEST_ID,
+          conflicts: [
+            {
+              resource: { type: 'administrative-units', id: 'org-1' },
+              key: 'legal-name',
+              base: 'Gemeente Test',
+              current: 'Gemeente Test-Oost',
+              proposed: 'Stad Test',
+              'competing-requests': [],
+            },
+            {
+              resource: {
+                type: 'structured-identifiers',
+                id: 'structured-sharepoint',
+              },
+              key: 'local-id',
+              base: null,
+              current: '41',
+              proposed: '42',
+              'competing-requests': [],
+            },
+            {
+              resource: { type: 'identifiers', id: 'identifier-kbo' },
+              key: 'id-name',
+              base: 'KBO nummer',
+              current: 'KBO',
+              proposed: 'KBO nummer',
+              'competing-requests': [],
+            },
+          ],
+        }),
+      );
+      // Refreshing the route resets this controller, as the edit route's
+      // willTransition does
+      const revision = this.controller.formRevision;
+      this.refresh.callsFake(async () => {
+        this.controller.reset();
+        assert.strictEqual(
+          this.controller.formRevision,
+          revision,
+          'the form is not rebuilt before the records are reloaded',
+        );
+      });
+
+      await this.controller.save.perform({ preventDefault() {} });
+
+      assert.true(
+        this.refresh.calledOnceWithExactly(
+          'organizations.organization.core-data',
+        ),
+        'the route that loads the organisation with everything the form shows is refreshed',
+      );
+      assert.strictEqual(
+        this.controller.formRevision,
+        revision + 1,
+        'the form is built anew from the reloaded records',
+      );
+      assert.deepEqual(
+        this.controller.heldRequest,
+        {
+          id: REQUEST_ID,
+          fields: ['Juridische naam', 'SharePoint identificator', 'id-name'],
+          reloadFailed: false,
+        },
+        'the request, to withdraw it, and the labels of the page, the key for a field without one',
+      );
+      assert.true(this.transitionTo.notCalled, 'the page stays');
+      assert.true(this.warning.notCalled, 'no toast that suggests success');
+      assert.true(
+        this.fetch.notCalled,
+        'no KBO sync without an applied request',
+      );
+      assert.strictEqual(this.controller.saveError, null);
+      assert.false(this.controller.saveBlocked, 'saving again is allowed');
+
+      // Leaving the page clears the notice
+      this.controller.reset();
+
+      assert.strictEqual(this.controller.heldRequest, null);
+    });
+
+    test('it blocks saving until a reload when the records of a held request could not be reloaded', async function (assert) {
+      const { organization } = this.controller.model;
+      organization.legalName = 'Stad Test';
+      this.submit.rejects(
+        new ChangeRequestError('De wijziging werd niet doorgevoerd.', {
+          status: 201,
+          held: true,
+          requestId: REQUEST_ID,
+          reloadFailed: true,
+          cause: new Error('502 Bad Gateway'),
+        }),
+      );
+      this.refresh.callsFake(async () => this.controller.reset());
+
+      await this.controller.save.perform({ preventDefault() {} });
+
+      assert.true(this.controller.heldRequest.reloadFailed);
+      assert.true(
+        this.controller.saveBlocked,
+        'a new save would start from the values the page loaded',
+      );
+
+      await this.controller.save.perform({ preventDefault() {} });
+
+      assert.true(this.submit.calledOnce, 'a second save sends nothing');
+    });
+
+    test('it reports the held request in a toast when the page cannot be refreshed', async function (assert) {
+      const { organization } = this.controller.model;
+      organization.legalName = 'Stad Test';
+      this.submit.rejects(
+        new ChangeRequestError('De wijziging werd niet doorgevoerd.', {
+          status: 201,
+          held: true,
+          requestId: REQUEST_ID,
+        }),
+      );
+      // The model hook fails: the router shows the error page
+      this.refresh.rejects(new Error('502 Bad Gateway'));
+      sinon.stub(console, 'warn');
+      const revision = this.controller.formRevision;
+
+      await this.controller.save.perform({ preventDefault() {} });
+
+      assert.true(
+        this.warning.calledOnceWith(
+          sinon.match('Je aanvraag wacht op een beslissing van ABB.'),
+          'Wijziging niet doorgevoerd',
+        ),
+        'the toast outlives the page',
+      );
+      assert.strictEqual(this.controller.heldRequest, null);
+      assert.strictEqual(this.controller.formRevision, revision);
+    });
+
+    test('it blocks saving and offers to apply the request again when its apply failed', async function (assert) {
+      const { organization } = this.controller.model;
+      organization.legalName = 'Stad Test';
+      this.submit.rejects(
+        new ChangeRequestError('De wijziging kon niet doorgevoerd worden.', {
+          status: 409,
+          applyFailed: true,
+          requestId: REQUEST_ID,
+        }),
+      );
+      const reapply = sinon
+        .stub(this.owner.lookup('service:change-requests'), 'reapply')
+        .resolves();
+
+      await this.controller.save.perform({ preventDefault() {} });
+
+      assert.strictEqual(
+        this.controller.saveError,
+        'De wijziging kon niet doorgevoerd worden.',
+      );
+      assert.true(this.controller.saveBlocked);
+      assert.strictEqual(this.controller.failedRequestId, REQUEST_ID);
+      assert.true(this.transitionTo.notCalled);
+      assert.true(organization.hasDirtyAttributes, 'the edits are kept');
+
+      await this.controller.save.perform({ preventDefault() {} });
+
+      assert.true(
+        this.submit.calledOnce,
+        'a new request would conflict with what the failed apply left',
+      );
+
+      await this.controller.reapply.perform();
+
+      assert.true(reapply.calledOnceWithExactly(REQUEST_ID));
+      assert.true(
+        this.fetch.calledOnceWith('/kbo-data-sync/structured-kbo', {
+          method: 'POST',
+        }),
+        'the KBO data is synced, as after a save',
+      );
+      assert.true(this.success.calledOnce);
+      assert.true(
+        this.transitionTo.calledOnceWithExactly(
+          'organizations.organization.core-data',
+          'org-1',
+        ),
+        'the page is left, as after a save',
+      );
+    });
+
+    test('an apply that fails again can be tried again; one the service refuses needs a reload', async function (assert) {
+      this.controller.saveBlocked = true;
+      this.controller.failedRequestId = REQUEST_ID;
+      const reapply = sinon.stub(
+        this.owner.lookup('service:change-requests'),
+        'reapply',
+      );
+      reapply.rejects(
+        new ChangeRequestError('Opnieuw mislukt.', {
+          status: 409,
+          applyFailed: true,
+          requestId: REQUEST_ID,
+        }),
+      );
+
+      await this.controller.reapply.perform();
+
+      assert.strictEqual(this.controller.saveError, 'Opnieuw mislukt.');
+      assert.strictEqual(this.controller.failedRequestId, REQUEST_ID);
+
+      // The step did not reach the service
+      reapply.rejects(
+        new ChangeRequestError('De wijziging kon niet verstuurd worden.'),
+      );
+
+      await this.controller.reapply.perform();
+
+      assert.strictEqual(
+        this.controller.failedRequestId,
+        REQUEST_ID,
+        'it can be tried again',
+      );
+
+      reapply.rejects(
+        new ChangeRequestError('Herlaad de pagina.', { status: 409 }),
+      );
+
+      await this.controller.reapply.perform();
+
+      assert.strictEqual(this.controller.saveError, 'Herlaad de pagina.');
+      assert.strictEqual(
+        this.controller.failedRequestId,
+        null,
+        'no request to apply again',
+      );
+      assert.true(this.controller.saveBlocked, 'saving needs a reload');
+      assert.true(this.transitionTo.notCalled);
+
+      this.controller.reset();
+
+      assert.false(this.controller.saveBlocked);
+    });
+
+    test('it leaves the contact point and the SharePoint identifier the route created out of the request when the user left them empty', async function (assert) {
+      this.owner
+        .lookup('service:features')
+        .setup({ 'edit-contact-data': true, 'legal-form-editable': false });
+      this.controller.model = await this.coreDataModelWithPlaceholders();
+      const {
+        organization,
+        site,
+        identifierKBO,
+        structuredIdentifierKBO,
+        secondaryContact,
+        identifierSharepoint,
+      } = this.controller.model;
+      organization.legalName = 'Stad Twee';
+      this.submit.resolves(
+        new Map([[structuredIdentifierKBO, structuredIdentifierKBO]]),
+      );
+
+      await this.controller.save.perform({ preventDefault() {} });
+
+      assert.notOk(this.controller.hasValidationErrors);
+      assert.deepEqual(
+        this.submit.firstCall.args[2],
+        [structuredIdentifierKBO, identifierKBO, organization],
+        'neither the placeholders nor the site, whose contact points nobody changed',
+      );
+      assert.deepEqual(site.hasMany('contacts').ids(), ['contact-2']);
+      assert.true(secondaryContact.isNew);
+      assert.true(identifierSharepoint.isNew);
+    });
+
+    test('it submits and links the contact point and the SharePoint identifier the route created once the user filled them in', async function (assert) {
+      this.owner
+        .lookup('service:features')
+        .setup({ 'edit-contact-data': true, 'legal-form-editable': false });
+      this.controller.model = await this.coreDataModelWithPlaceholders();
+      const {
+        organization,
+        site,
+        identifierKBO,
+        structuredIdentifierKBO,
+        contact,
+        secondaryContact,
+        identifierSharepoint,
+        structuredIdentifierSharepoint,
+      } = this.controller.model;
+      secondaryContact.telephone = '+3253779300';
+      structuredIdentifierSharepoint.localId = '42';
+      this.submit.resolves(
+        new Map([[structuredIdentifierKBO, structuredIdentifierKBO]]),
+      );
+
+      await this.controller.save.perform({ preventDefault() {} });
+
+      assert.notOk(this.controller.hasValidationErrors);
+      assert.deepEqual(this.submit.firstCall.args[2], [
+        secondaryContact,
+        site,
+        structuredIdentifierKBO,
+        identifierKBO,
+        structuredIdentifierSharepoint,
+        identifierSharepoint,
+        organization,
+      ]);
+      assert.deepEqual(site.hasMany('contacts').value().slice(), [
+        contact,
+        secondaryContact,
+      ]);
     });
 
     test('it blocks a retry when the outcome of the request is unknown', async function (assert) {
