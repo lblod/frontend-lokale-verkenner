@@ -37,7 +37,7 @@ module.exports = function (environment) {
         message: '{{ANNOUNCE_TESTING_MESSAGE}}',
       },
     },
-    appName: 'OrganisatiePortaal',
+    appName: 'Lokale Verkenner',
     contactEmail: 'organisaties.abb@vlaanderen.be',
     environmentName: '{{ENVIRONMENT_NAME}}',
 

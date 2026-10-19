@@ -1,6 +1,6 @@
 {{page-title
   (concat
-    "OrganisatiePortaal"
+    "Lokale Verkenner"
     (if this.showEnvironment (concat " - " this.environmentName))
   )
 }}
@@ -11,10 +11,10 @@
 <AuApp class="{{if this.showEnvironment 'au-c-app--environment'}}">
   {{#if this.showEnvironment}}
     <EnvironmentBanner
-      @applicationName="OrganisatiePortaal"
+      @applicationName="Lokale Verkenner"
       @environmentName={{this.environmentName}}
       @skin={{this.environmentInfo.skin}}
-      @message='Dit is de <strong>{{this.environmentInfo.title}}</strong> van het Organisatie Portaal met fictieve en testgegevens. De productieomgeving met de echte data vind je op <a href="https://organisaties.abb.vlaanderen.be" title="Organisatie Portaal" rel="tag">https://organisaties.abb.vlaanderen.be</a>.'
+      @message='Dit is de <strong>{{this.environmentInfo.title}}</strong> van de Lokale Verkenner met fictieve en testgegevens. De productieomgeving met de echte data vind je op <a href="https://organisaties.abb.vlaanderen.be" title="Lokale Verkenner" rel="tag">https://organisaties.abb.vlaanderen.be</a>.'
     />
   {{/if}}
   <AppHeader />
