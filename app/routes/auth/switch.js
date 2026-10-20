@@ -12,7 +12,7 @@ export default class AuthSwitchRoute extends Route {
 
     try {
       let wasMockLoginSession = this.session.isMockLoginSession;
-      await this.role.destroyActiveRole();
+      this.role.clearActiveRole();
       await this.session.invalidate();
       let logoutUrl = wasMockLoginSession
         ? this.router.urlFor('mock-login')

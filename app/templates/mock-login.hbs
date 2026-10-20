@@ -1,40 +1,67 @@
 <StaticPage>
-  <div class="au-o-layout au-o-region-large">
-    <MockLogin as |login|>
-      {{#if login.isLoading}}
-        <AuLoader>
-          Testgebruikers aan het laden
-        </AuLoader>
-      {{else}}
-        {{#if login.errorMessage}}
-          {{login.errorMessage}}
+  <div class="au-o-region-large">
+    <div class="au-o-layout">
+      <AuHeading @skin="4">Kies een organisatie om mee in te loggen.</AuHeading>
+      <p class="au-u-margin-top-small au-u-margin-bottom">
+        <AuInput
+          @value={{this.organisatie}}
+          @placeholder="Aalst, Berchem,..."
+          aria-label="Kies een organisatie om mee in te loggen"
+          name="organisatie"
+          {{on "input" this.updateSearch}}
+        />
+      </p>
+
+      <MockLogin as |login|>
+        {{#if login.isLoading}}
+          <AuLoader class="au-o-region">Accounts aan het laden</AuLoader>
+        {{else}}
+          {{#if login.errorMessage}}
+            <AuAlert
+              @icon="alert-triangle"
+              @title={{login.errorMessage}}
+              @skin="warning"
+            />
+          {{/if}}
+
+          {{#if this.model.accounts.length}}
+            <ul class="au-o-flow au-o-flow--small au-u-margin-bottom-small">
+              {{#each this.model.accounts as |account|}}
+                {{#each account.user.organizations as |organization|}}
+                  <li>
+                    <AuButton
+                      @skin="secondary"
+                      class="mock-account-button au-u-padding-small au-u-1-1 au-u-text-left"
+                      {{on "click" (fn login.login account.id organization.id)}}
+                    >
+                      {{account.user.firstName}}
+                      {{account.user.familyName}}
+                      {{#if organization.alternativeName.length}}
+                        <span>
+                          <span class="au-c-info-text">Alternatieve naam:</span>
+                          {{#each organization.alternativeName as |alternativeName|}}
+                            <AuPill>{{alternativeName}}</AuPill>
+                          {{/each}}
+                        </span>
+                      {{/if}}
+                    </AuButton>
+                  </li>
+                {{/each}}
+              {{/each}}
+            </ul>
+          {{else}}
+            <p>Geen organisaties gevonden.</p>
+          {{/if}}
+
+          <AuDataTableNumberPagination
+            @page={{this.page}}
+            @size={{this.size}}
+            @nbOfItems={{this.model.accounts.length}}
+            @total={{this.model.accounts.meta.count}}
+            @links={{this.model.accounts.meta.pagination}}
+          />
         {{/if}}
-        <AuHeading @skin="4" class="au-u-margin-bottom">Kies een testgebruiker</AuHeading>
-        <ul>
-          {{#each this.model.accounts as |account|}}
-            <li>
-              <div
-                class="au-o-box au-o-box--small au-c-card au-u-margin-bottom-small"
-              >
-                <AuButton
-                  @skin="link"
-                  {{on
-                    "click"
-                    (fn login.login account.id account.user.group.id)
-                  }}
-                >
-                  <strong>
-                    {{account.user.firstName}}
-                    {{account.user.familyName}}
-                    -&nbsp;
-                  </strong>
-                  {{account.user.group.name}}
-                </AuButton>
-              </div>
-            </li>
-          {{/each}}
-        </ul>
-      {{/if}}
-    </MockLogin>
+      </MockLogin>
+    </div>
   </div>
 </StaticPage>

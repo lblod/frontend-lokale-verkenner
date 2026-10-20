@@ -10,14 +10,15 @@ export default class UserModel extends Model {
   })
   accounts;
 
-  @hasMany('group', {
+  @hasMany('organization', {
+    polymorphic: true,
     inverse: null,
     async: false,
   })
-  groups;
+  organizations;
 
   get group() {
-    return this.groups.at(0);
+    return this.organizations.at(0);
   }
 
   get fullName() {

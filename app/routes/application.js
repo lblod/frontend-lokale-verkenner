@@ -20,7 +20,7 @@ export default class ApplicationRoute extends Route {
 
     try {
       await this.currentSession.load();
-      await this.role.loadActiveRole();
+      this.role.setActiveRole(this.currentSession.roles?.[0] ?? null);
     } catch {
       this.router.transitionTo('auth.logout');
     }
