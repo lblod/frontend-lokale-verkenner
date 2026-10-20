@@ -1,7 +1,10 @@
-/* eslint-disable warp-drive/no-legacy-request-patterns -- TODO: remove this once we have an alternative for peekRecord and peekAll */
 import { module, test } from 'qunit';
+import sinon from 'sinon';
 import { setupTest } from 'frontend-organization-portal/tests/helpers';
-import NewController from 'frontend-organization-portal/controllers/organizations/new';
+import NewController, {
+  kboConflictMessage,
+} from 'frontend-organization-portal/controllers/organizations/new';
+import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
 import {
   createPrimaryContact,
   createSecondaryContact,
@@ -9,67 +12,137 @@ import {
 import { ID_NAME } from 'frontend-organization-portal/models/identifier';
 import { ORGANIZATION_STATUS } from 'frontend-organization-portal/models/organization-status-code';
 import { CLASSIFICATION } from 'frontend-organization-portal/models/administrative-unit-classification-code';
-import {
-  MEMBERSHIP_ROLES,
-  MEMBERSHIP_ROLES_MAPPING,
-} from 'frontend-organization-portal/models/membership-role';
-import { REGERING_CLASSIFICATION_ID } from 'frontend-organization-portal/constants/classification';
-import {
-  FEDERALE_REGERING_ID,
-  VLAAMSE_REGERING_ID,
-} from 'frontend-organization-portal/constants/special-organizations';
+import { CHANGE_EVENT_TYPE } from 'frontend-organization-portal/models/change-event-type';
+
+const AGB_URI = `http://data.vlaanderen.be/id/concept/BestuurseenheidClassificatieCode/${CLASSIFICATION.AGB.id}`;
+const REQUEST_ID = '25e29be4-7c4e-4044-9357-2196fa23a17e';
 
 module('Unit | Controller | organizations/new', function (hooks) {
   setupTest(hooks);
 
-  // The organizations routes are built into a lazy bundle (`splitAtRoutes`
-  // in ember-cli-build.js), so the controller must be registered before the
-  // owner can look it up.
   hooks.beforeEach(function () {
+    // The organizations routes are built into a lazy bundle, so the
+    // controller must be registered before the owner can look it up
     this.owner.register('controller:organizations/new', NewController);
+    this.store = this.owner.lookup('service:store');
+    this.controller = this.owner.lookup('controller:organizations/new');
+    this.changeRequests = this.owner.lookup('service:change-requests');
+    this.changeRequests.rights = { canDecide: false, canCreate: [AGB_URI] };
+    this.submit = sinon.stub(this.changeRequests, 'submit');
+    this.replaceWith = sinon.stub(
+      this.owner.lookup('service:router'),
+      'replaceWith',
+    );
+    this.success = sinon.stub(this.owner.lookup('service:toaster'), 'success');
+    // The contact data of a new organisation is edited here when the flag is
+    // on, as in development; without it the contact card is a notice
+    this.owner
+      .lookup('service:features')
+      .setup({ 'edit-contact-data': true, 'legal-form-editable': true });
+    // The KBO uniqueness check of the identifier model queries the backend
+    sinon
+      .stub(this.owner.lookup('adapter:application'), 'query')
+      .resolves({ data: [] });
+    // The werkingsgebied comes from the scope-of-operation service: here the
+    // one location picked
+    this.scopeFor = sinon
+      .stub(
+        this.owner.lookup('service:scope-of-operation'),
+        'getScopeForLocations',
+      )
+      .callsFake(async (...locations) => locations[0]);
   });
 
-  this.store = function () {
-    return this.owner.lookup('service:store');
-  };
-
-  this.controller = function () {
-    return this.owner.lookup('controller:organizations/new');
-  };
+  hooks.afterEach(function () {
+    sinon.restore();
+  });
 
   /**
-   * Set up the controller as the new route does, for an unsaved organization
-   * of the given model and classification.
+   * The form as the route sets it up, with a complete AGB filled in.
    */
-  function setupController(store, controller, modelName, classification) {
-    const roles = MEMBERSHIP_ROLES.map((role) =>
-      store.push({
-        data: {
-          type: 'membership-role',
-          id: role.id,
-          attributes: { label: role.label },
+  function setupForm(store, controller, { complete = true } = {}) {
+    const [
+      classification,
+      status,
+      legalForm,
+      location,
+      oprichting,
+      theme,
+      qualification,
+    ] = store.push({
+      data: [
+        {
+          type: 'administrative-unit-classification-code',
+          id: CLASSIFICATION.AGB.id,
+          attributes: { label: CLASSIFICATION.AGB.label },
         },
-      }),
-    );
+        {
+          type: 'organization-status-code',
+          id: ORGANIZATION_STATUS.ACTIVE,
+          attributes: { label: 'Actief' },
+        },
+        { type: 'concept', id: 'legal-form-1', attributes: { label: 'vzw' } },
+        {
+          type: 'location',
+          id: 'location-1',
+          attributes: { label: 'Aalst' },
+        },
+        {
+          type: 'change-event-type',
+          id: CHANGE_EVENT_TYPE.OPRICHTING,
+          attributes: { label: 'Oprichting' },
+        },
+        { type: 'concept', id: 'theme-1', attributes: { label: 'Cultuur' } },
+        {
+          type: 'additional-qualification-code',
+          id: 'qualification-1',
+          attributes: { label: 'Erkend' },
+        },
+      ],
+    });
 
-    controller.set(
-      'currentOrganizationModel',
-      store.createRecord(modelName, {
-        classification: store.createRecord(
-          'administrative-unit-classification-code',
-          classification,
-        ),
-      }),
-    );
+    const organization = store.createRecord('administrative-unit', {
+      classification,
+    });
+    if (complete) {
+      organization.setAbbName('AGB Aalst');
+      organization.organizationStatus = status;
+      organization.legalForm = legalForm;
+      // An AGB needs a theme and a qualification, as OP's rules say
+      organization.contentThemes = [theme];
+      organization.additionalQualifications = [qualification];
+      controller.locations = [location];
+    }
+    controller.set('currentOrganizationModel', organization);
 
-    const structuredIdentifierKBO = store.createRecord('structured-identifier');
+    const structuredIdentifierKBO = store.createRecord(
+      'structured-identifier',
+      {
+        localId: complete ? '0123456789' : '',
+      },
+    );
     const structuredIdentifierSharepoint = store.createRecord(
       'structured-identifier',
     );
-
-    controller.set('model', {
+    const decision = store.createRecord('decision', {
+      documentLinks: complete ? ['https://aalst.be/besluiten/2026/123'] : [],
+    });
+    const changeEvent = store.createRecord('change-event', {
+      type: oprichting,
+      description: 'Oprichting',
+      decision,
+    });
+    const address = store.createRecord('address', {
+      country: 'België',
+      street: 'Grote Markt',
+      number: '1',
+      postcode: '9300',
+      municipality: 'Aalst',
+      province: 'Oost-Vlaanderen',
+    });
+    const model = {
       primarySite: store.createRecord('site'),
-      address: store.createRecord('address', { country: 'België' }),
+      address,
       contact: createPrimaryContact(store),
       secondaryContact: createSecondaryContact(store),
       identifierKBO: store.createRecord('identifier', {
@@ -82,253 +155,178 @@ module('Unit | Controller | organizations/new', function (hooks) {
         structuredIdentifier: structuredIdentifierSharepoint,
       }),
       structuredIdentifierSharepoint,
-      roles,
-    });
+      changeEvent,
+      decision,
+    };
+    controller.set('model', model);
+    return { organization, ...model };
   }
 
-  module('createOrganizationTask', function () {
-    /**
-     * Push persisted, active organizations of the given classifications, as
-     * the organization selects on the create form offer them.
-     */
-    function pushPickedOrganizations(store, classifications) {
-      const data = [
-        {
-          type: 'organization-status-code',
-          id: ORGANIZATION_STATUS.ACTIVE,
-          attributes: { label: 'Actief' },
-        },
-      ];
-      for (const [index, classification] of classifications.entries()) {
-        data.push(
-          {
-            type: 'administrative-unit-classification-code',
-            id: classification.id,
-            attributes: { label: classification.label },
-          },
-          {
-            type: 'administrative-unit',
-            id: `organization-${index}`,
-            relationships: {
-              classification: {
-                data: {
-                  type: 'administrative-unit-classification-code',
-                  id: classification.id,
-                },
-              },
-              organizationStatus: {
-                data: {
-                  type: 'organization-status-code',
-                  id: ORGANIZATION_STATUS.ACTIVE,
-                },
-              },
-            },
-          },
-        );
-      }
-      store.push({ data });
-      return classifications.map((_, index) =>
-        store.peekRecord('administrative-unit', `organization-${index}`),
-      );
-    }
+  test('it offers the classifications the service allows and names the button after who submits', function (assert) {
+    const { controller } = this;
+    assert.deepEqual(
+      controller.allowedClassificationIds,
+      [CLASSIFICATION.AGB.id],
+      'the uuid at the end of the URI',
+    );
+    assert.false(controller.appliesAtOnce);
+    assert.strictEqual(controller.submitLabel, 'Aanvraag versturen');
 
-    /**
-     * Push a persisted, active "Regering"-classified government, as the save
-     * task fetches it for the autofill types.
-     */
-    function pushGovernment(store, governmentId) {
-      const [, , government] = store.push({
-        data: [
-          {
-            type: 'organization-status-code',
-            id: ORGANIZATION_STATUS.ACTIVE,
-            attributes: { label: 'Actief' },
-          },
-          {
-            type: 'administrative-unit-classification-code',
-            id: REGERING_CLASSIFICATION_ID,
-            attributes: { label: 'Regering' },
-          },
-          {
-            type: 'organization',
-            id: governmentId,
-            relationships: {
-              classification: {
-                data: {
-                  type: 'administrative-unit-classification-code',
-                  id: REGERING_CLASSIFICATION_ID,
-                },
-              },
-              organizationStatus: {
-                data: {
-                  type: 'organization-status-code',
-                  id: ORGANIZATION_STATUS.ACTIVE,
-                },
-              },
-            },
-          },
-        ],
-      });
-      return government;
-    }
-
-    test('it saves a member-side field on the membershipsOfOrganizations and an organization-side field on the memberships', async function (assert) {
-      const store = this.store();
-      const controller = this.controller();
-      setupController(
-        store,
-        controller,
-        'registered-organization',
-        // A non-autofill classification: its save task fetches no government.
-        CLASSIFICATION.ANDERE,
-      );
-      const [regionaalZorgplatform, municipality] = pushPickedOrganizations(
-        store,
-        [CLASSIFICATION.REGIONAAL_ZORGPLATFORM, CLASSIFICATION.MUNICIPALITY],
-      );
-
-      // The "Andere" being created is a member of the regionaal zorgplatform
-      // ("Is lid van") and the organization side of its members
-      // ("Heeft als leden").
-      const fields = controller.membershipFields;
-      const memberSideField = fields.find((field) => field.asMember);
-      const organizationSideField = fields.find((field) => !field.asMember);
-      controller.setOrganizationForField(
-        memberSideField,
-        regionaalZorgplatform,
-      );
-      controller.setOrganizationForField(organizationSideField, municipality);
-
-      // The save stops on the validations of the unfinished organization;
-      // the memberships it built are what is asserted here.
-      await controller.createOrganizationTask.perform({
-        preventDefault() {},
-      });
-
-      assert.strictEqual(controller.membershipsOfOrganizations.length, 1);
-      const memberSideMembership = controller.membershipsOfOrganizations[0];
-      assert.strictEqual(
-        memberSideMembership.belongsTo('role').id(),
-        MEMBERSHIP_ROLES_MAPPING.PARTICIPATES_IN.id,
-      );
-      assert.strictEqual(
-        memberSideMembership.belongsTo('member').value(),
-        controller.currentOrganizationModel,
-      );
-      assert.strictEqual(
-        memberSideMembership.belongsTo('organization').value(),
-        regionaalZorgplatform,
-      );
-
-      assert.strictEqual(controller.memberships.length, 1);
-      const organizationSideMembership = controller.memberships[0];
-      assert.strictEqual(
-        organizationSideMembership.belongsTo('role').id(),
-        MEMBERSHIP_ROLES_MAPPING.PARTICIPATES_IN.id,
-      );
-      assert.strictEqual(
-        organizationSideMembership.belongsTo('organization').value(),
-        controller.currentOrganizationModel,
-      );
-      assert.strictEqual(
-        organizationSideMembership.belongsTo('member').value(),
-        municipality,
-      );
-    });
-
-    // The save task autofills the founder and recognizer memberships with
-    // the government of the type: the Federale regering for a politiezone,
-    // the Vlaamse regering for a zorgraad.
-    [
-      [CLASSIFICATION.POLICE_ZONE, 'administrative-unit', FEDERALE_REGERING_ID],
-      [CLASSIFICATION.ZORGRAAD, 'registered-organization', VLAAMSE_REGERING_ID],
-    ].forEach(([classification, modelName, governmentId]) => {
-      test(`it autofills the government memberships for a ${classification.label}`, async function (assert) {
-        const store = this.store();
-        const controller = this.controller();
-        setupController(store, controller, modelName, classification);
-        const government = pushGovernment(store, governmentId);
-
-        // The save task fetches the government with
-        // store.request(findRecord(...)), which hits the adapter even with
-        // the record in the store: serve the pushed government from the
-        // adapter instead of the network.
-        this.owner.lookup('adapter:application').findRecord = () => ({
-          data: { type: 'organizations', id: governmentId },
-        });
-
-        // The save stops on the validations of the unfinished organization;
-        // the two autofilled memberships are what is asserted here.
-        await controller.createOrganizationTask.perform({
-          preventDefault() {},
-        });
-
-        assert.strictEqual(controller.memberships.length, 2);
-        const [founderMembership, recognitionMembership] =
-          controller.memberships;
-        assert.strictEqual(
-          founderMembership.belongsTo('role').id(),
-          MEMBERSHIP_ROLES_MAPPING.IS_FOUNDER_OF.id,
-        );
-        assert.strictEqual(
-          founderMembership.belongsTo('member').value(),
-          government,
-        );
-        assert.strictEqual(
-          founderMembership.belongsTo('organization').value(),
-          controller.currentOrganizationModel,
-        );
-        assert.strictEqual(
-          recognitionMembership.belongsTo('role').id(),
-          MEMBERSHIP_ROLES_MAPPING.GRANTS_RECOGNITION_TO.id,
-        );
-        assert.strictEqual(
-          recognitionMembership.belongsTo('member').value(),
-          government,
-        );
-        assert.strictEqual(
-          recognitionMembership.belongsTo('organization').value(),
-          controller.currentOrganizationModel,
-        );
-      });
-    });
+    this.changeRequests.rights = { canDecide: true, canCreate: [] };
+    assert.deepEqual(controller.allowedClassificationIds, []);
+    assert.true(
+      controller.appliesAtOnce,
+      "ABB's registration is applied at once",
+    );
+    assert.strictEqual(controller.submitLabel, 'Voeg toe');
   });
 
-  module('containsRequiredFields', function () {
-    test('it is false for a type whose related-organization fields are all optional', function (assert) {
-      const controller = this.controller();
-      setupController(
-        this.store(),
-        controller,
-        'registered-organization',
-        CLASSIFICATION.WOONMAATSCHAPPIJ,
-      );
+  test('it does not submit an incomplete organisation', async function (assert) {
+    const { controller } = this;
+    setupForm(this.store, controller, { complete: false });
 
-      assert.false(controller.containsRequiredFields);
+    await controller.submitRequestTask.perform({ preventDefault() {} });
+
+    assert.true(this.submit.notCalled);
+    assert.true(controller.hasValidationErrors);
+    assert.ok(
+      controller.currentOrganizationModel.error.legalName,
+      'the legal name is required',
+    );
+    assert.ok(
+      controller.model.identifierKBO.error,
+      'the KBO number is required for an AGB',
+    );
+  });
+
+  test('it submits the organisation with its KBO number, site, besluit and oprichting as one request and goes to the request when it waits for ABB', async function (assert) {
+    const { controller } = this;
+    const form = setupForm(this.store, controller);
+    controller.reason = 'Opgericht bij besluit van 1 oktober 2026';
+    this.submit.rejects(
+      new ChangeRequestError('De aanvraag wacht op ABB.', {
+        status: 201,
+        held: true,
+        waiting: true,
+        requestId: REQUEST_ID,
+      }),
+    );
+
+    await controller.submitRequestTask.perform({ preventDefault() {} });
+
+    assert.false(controller.hasValidationErrors);
+    assert.true(this.submit.calledOnce);
+    const [aggregate, target, records, options] = this.submit.firstCall.args;
+    assert.strictEqual(aggregate, 'new-organisation');
+    assert.strictEqual(target, null, 'a creation has no target');
+    assert.deepEqual(
+      records.map((record) => record.constructor.modelName),
+      [
+        'structured-identifier',
+        'identifier',
+        'contact-point',
+        'contact-point',
+        'address',
+        'site',
+        'decision',
+        'change-event',
+        'administrative-unit',
+      ],
+      'dependencies first, the organisation last; no SharePoint identifier without a value',
+    );
+    assert.deepEqual(options, {
+      reason: 'Opgericht bij besluit van 1 oktober 2026',
     });
+    assert.true(
+      this.scopeFor.calledOnce,
+      'the scope service decides the werkingsgebied',
+    );
+    assert.strictEqual((await form.organization.scope)?.id, 'location-1');
+    assert.strictEqual(
+      (await form.organization.primarySite)?.id,
+      form.primarySite.id,
+    );
+    assert.strictEqual(
+      form.address.fullAddress,
+      'Grote Markt 1, 9300 Aalst, België',
+    );
+    assert.deepEqual(
+      (await form.changeEvent.originalOrganizations).map(
+        (organization) => organization,
+      ),
+      [form.organization],
+      'the oprichting is about the new organisation',
+    );
+    assert.true(this.success.calledOnce);
+    assert.true(
+      this.replaceWith.calledOnceWithExactly('aanvragen.aanvraag', REQUEST_ID),
+    );
+  });
 
-    test('it is true for a type with a required related-organization field', function (assert) {
-      const controller = this.controller();
-      setupController(
-        this.store(),
-        controller,
-        'registered-organization',
-        CLASSIFICATION.ZORGRAAD,
-      );
+  test("ABB's registration is applied at once: the page goes to the new organisation", async function (assert) {
+    const { controller } = this;
+    this.changeRequests.rights = { canDecide: true, canCreate: [] };
+    const { organization } = setupForm(this.store, controller);
+    this.submit.resolves(new Map([[organization, { id: 'new-org' }]]));
 
-      assert.true(controller.containsRequiredFields);
-    });
+    await controller.submitRequestTask.perform({ preventDefault() {} });
 
-    test('it is true for worship, whose representative body is required', function (assert) {
-      const controller = this.controller();
-      setupController(
-        this.store(),
-        controller,
-        'worship-service',
-        CLASSIFICATION.WORSHIP_SERVICE,
-      );
+    assert.true(
+      this.replaceWith.calledOnceWithExactly(
+        'organizations.organization',
+        'new-org',
+      ),
+    );
+    assert.true(this.success.notCalled);
+  });
 
-      assert.true(controller.containsRequiredFields);
-    });
+  test('a KBO number the register or a waiting request already holds is shown on the field', async function (assert) {
+    const { controller } = this;
+    const { identifierKBO } = setupForm(this.store, controller);
+    this.submit.rejects(
+      new ChangeRequestError(
+        'KBO number 0123456789 belongs to organisation "org-2"',
+        {
+          status: 409,
+          errors: [
+            {
+              status: '409',
+              title:
+                'An organisation with this KBO number is already registered',
+              meta: {
+                'kbo-number': '0123456789',
+                organisation: { type: 'organizations', id: 'org-2' },
+              },
+            },
+          ],
+        },
+      ),
+    );
+
+    await controller.submitRequestTask.perform({ preventDefault() {} });
+
+    assert.strictEqual(
+      identifierKBO.error.structuredIdentifier.message,
+      'Er bestaat al een organisatie met dit KBO-nummer.',
+    );
+    assert.strictEqual(
+      controller.saveError,
+      'KBO number 0123456789 belongs to organisation "org-2"',
+    );
+    assert.true(this.replaceWith.notCalled);
+  });
+
+  test('kboConflictMessage reads the 409 of the service', function (assert) {
+    assert.strictEqual(kboConflictMessage([]), null);
+    assert.strictEqual(
+      kboConflictMessage([{ meta: { status: 'afgekeurd' } }]),
+      null,
+    );
+    assert.strictEqual(
+      kboConflictMessage([
+        { meta: { 'kbo-number': '1', 'change-request': { id: 'x' } } },
+      ]),
+      'Er wacht al een aanvraag voor een organisatie met dit KBO-nummer.',
+    );
   });
 });

@@ -144,14 +144,26 @@
           <PageHeader class="au-o-box">
             <:title>Organisaties</:title>
             <:action>
-              <AuLink
-                @route="aanvragen"
-                @skin="button-secondary"
-                @icon="list"
-                @iconAlignment="left"
-              >
-                Alle aanvragen
-              </AuLink>
+              <AuButtonGroup>
+                <AuLink
+                  @route="aanvragen"
+                  @skin="button-secondary"
+                  @icon="list"
+                  @iconAlignment="left"
+                >
+                  Alle aanvragen
+                </AuLink>
+                {{#if this.canCreateOrganization}}
+                  <AuLink
+                    @route="organizations.new"
+                    @skin="button"
+                    @icon="add"
+                    @iconAlignment="left"
+                  >
+                    Nieuw
+                  </AuLink>
+                {{/if}}
+              </AuButtonGroup>
             </:action>
           </PageHeader>
         </menu.general>

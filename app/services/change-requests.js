@@ -541,32 +541,45 @@ export default class ChangeRequestsService extends Service {
    * retrying.
    *
    * @param {string} aggregate - name of the aggregate, e.g. `organization-core-data`
-   * @param {string} target - uuid of the organisation the request is about
+   * @param {string|null} target - uuid of the organisation the request is
+   *     about; null for a request that registers a new organisation, which
+   *     has no target yet
    * @param {Model[]} records - the records of the aggregate, dependencies first
+   * @param {Object} [options]
+   * @param {string|null} [options.reason] - the submitter's explanation, kept
+   *     on the request and shown to ABB
    * @returns {Promise<Map<Model, Model|null>>} for every submitted record the
    *     reloaded record (a fresh record for the new ones, null for the deleted
    *     ones)
    */
-  async submit(aggregate, target, records) {
-    const serializer = getOwner(this).lookup('serializer:application');
+  async submit(aggregate, target, records, { reason = null } = {}) {
     const lids = new Map(
       records
         .filter((record) => record.isNew)
         .map((record) => [record, uuid()]),
     );
     const operations = records.map((record) =>
-      serializeOperation(serializer, this.store.cache, record, lids),
+      serializeOperation(
+        this.serializerFor(record),
+        this.store.cache,
+        record,
+        lids,
+      ),
     );
 
-    const response = await post(ENDPOINT, {
-      data: {
-        type: 'change-requests',
-        attributes: { aggregate, operations },
-        relationships: {
-          target: { data: { type: 'organizations', id: target } },
-        },
-      },
-    });
+    const requestAttributes = { aggregate, operations };
+    if (reason) {
+      requestAttributes.reason = reason;
+    }
+    const document = {
+      data: { type: 'change-requests', attributes: requestAttributes },
+    };
+    if (target) {
+      document.data.relationships = {
+        target: { data: { type: 'organizations', id: target } },
+      };
+    }
+    const response = await post(ENDPOINT, document);
 
     if (!response.ok) {
       const error = await ChangeRequestError.fromResponse(response);
@@ -575,7 +588,7 @@ export default class ChangeRequestsService extends Service {
         // A stale edit: someone else changed the same data since the page
         // loaded it. The service refused it without recording anything, so
         // the page shows the current values and the user saves again.
-        throw await this.unapplied(serializer, records, {
+        throw await this.unapplied(records, {
           status: response.status,
           errors: error.errors,
           conflicts,
@@ -591,7 +604,7 @@ export default class ChangeRequestsService extends Service {
 
     if (attributes.status === SUBMITTED) {
       // Recorded, not applied: the request waits for a decision by ABB
-      throw await this.unapplied(serializer, records, {
+      throw await this.unapplied(records, {
         status: response.status,
         conflicts: Array.isArray(attributes.conflicts)
           ? attributes.conflicts
@@ -622,7 +635,11 @@ export default class ChangeRequestsService extends Service {
       isDeleted: record.isDeleted,
       include: record.isNew
         ? Object.keys(operations[index].data.relationships ?? {})
-        : changedRelationshipKeys(serializer, this.store.cache, record),
+        : changedRelationshipKeys(
+            this.serializerFor(record),
+            this.store.cache,
+            record,
+          ),
     }));
 
     // The service applied the request: the backend is now the truth
@@ -683,13 +700,12 @@ export default class ChangeRequestsService extends Service {
    * @returns {Promise<ChangeRequestError>}
    */
   async unapplied(
-    serializer,
     records,
     { status, errors = [], conflicts, waiting, requestId },
   ) {
     let cause;
     try {
-      await this.reloadUnapplied(serializer, records);
+      await this.reloadUnapplied(records);
     } catch (error) {
       // Still nothing is applied, but the store now holds the values the
       // page loaded instead of the current ones, and a new save would
@@ -720,14 +736,18 @@ export default class ChangeRequestsService extends Service {
    * the relationships the request changed. A conflict is always about a key
    * the request changed, so these include every relationship in conflict.
    */
-  async reloadUnapplied(serializer, records) {
+  async reloadUnapplied(records) {
     // Decide what to reload while the local state still tells what changed
     const reloads = records
       .filter((record) => !record.isNew)
       .map((record) => ({
         type: record.constructor.modelName,
         id: record.id,
-        include: changedRelationshipKeys(serializer, this.store.cache, record),
+        include: changedRelationshipKeys(
+          this.serializerFor(record),
+          this.store.cache,
+          record,
+        ),
       }));
 
     for (const record of records) {
@@ -740,6 +760,18 @@ export default class ChangeRequestsService extends Service {
 
     await Promise.all(
       reloads.map(({ type, id, include }) => this.refetch(type, id, include)),
+    );
+  }
+
+  /**
+   * The serializer of a record: the one of its model when it has one (a
+   * change event writes its results), else the application's.
+   */
+  serializerFor(record) {
+    const owner = getOwner(this);
+    return (
+      owner.lookup(`serializer:${record.constructor.modelName}`) ??
+      owner.lookup('serializer:application')
     );
   }
 

@@ -11,26 +11,41 @@
             Annuleer
           </AuLink>
           <AuButton
-            @loading={{this.createOrganizationTask.isRunning}}
-            @loadingMessage="Voeg toe"
+            @loading={{this.submitRequestTask.isRunning}}
+            @loadingMessage={{this.submitLabel}}
             type="submit"
             form="organization-creation-form"
-            @icon="add"
+            @icon={{if this.appliesAtOnce "add" "send"}}
             @iconAlignment="left"
+            data-test-submit-request
           >
-            Voeg toe
+            {{this.submitLabel}}
           </AuButton>
         </AuButtonGroup>
         <Error::Save @showSaveError={{this.hasValidationErrors}} />
+        <Error::ChangeRequest @message={{this.saveError}} />
       </div>
     </:action>
   </PageHeader>
+
+  {{#unless this.appliesAtOnce}}
+    <AuAlert
+      @skin="info"
+      @icon="info-circle"
+      @title="Een nieuwe organisatie wordt gevalideerd door ABB"
+      class="au-u-margin au-u-margin-bottom-large"
+    >
+      Vul de gegevens in van een organisatie die officieel geregistreerd is (met
+      een KBO-nummer). Na het versturen valideert ABB de aanvraag; je volgt ze
+      op onder "Alle aanvragen".
+    </AuAlert>
+  {{/unless}}
 
   <form
     class="au-o-box au-o-flow au-o-flow--large"
     id="organization-creation-form"
     aria-label="organization-creation-form"
-    {{on "submit" (perform this.createOrganizationTask)}}
+    {{on "submit" (perform this.submitRequestTask)}}
   >
     <EditCard @containsRequiredFields={{true}}>
       <:title>Organisatie</:title>
@@ -100,20 +115,19 @@
               <:content as |hasError|>
                 <ClassificationSelect
                   @selected={{this.currentOrganizationModel.classification}}
-                  @selectedRecognizedWorshipTypeId={{this.currentOrganizationModel.recognizedWorshipType.id}}
                   @onChange={{this.organizationConverter}}
                   @restrictForNewOrganizations={{true}}
+                  @allowedIds={{this.allowedClassificationIds}}
                   @error={{hasError}}
                   @id="classification-select"
                 />
               </:content>
+              <:helpText>
+                Je kan enkel organisaties aanvragen die je bestuur opricht of
+                beheert.
+              </:helpText>
             </Item>
-            {{#if
-              (and
-                this.currentOrganizationModel.classification
-                (not this.currentOrganizationModel.isWorshipAdministrativeUnit)
-              )
-            }}
+            {{#if this.currentOrganizationModel.classification}}
               <Item
                 @labelFor="legal-form-select"
                 @required={{true}}
@@ -152,7 +166,6 @@
                 </:content>
               </Item>
             {{/if}}
-
             {{#if
               (requires-additional-qualifications
                 this.currentOrganizationModel.classification
@@ -195,73 +208,6 @@
                 </Item>
               {{/if}}
             {{/if}}
-
-            {{#if this.currentOrganizationModel.isWorshipAdministrativeUnit}}
-              <Item
-                @labelFor="recognized-worship-type-select"
-                @required={{true}}
-                @errorMessage={{this.currentOrganizationModel.error.recognizedWorshipType.message}}
-              >
-                <:label>Soort eredienst</:label>
-                <:content as |hasError|>
-                  <RecognizedWorshipTypeSelect
-                    @selected={{this.currentOrganizationModel.recognizedWorshipType}}
-                    @onChange={{this.setRecognizedWorshipType}}
-                    @allowClear={{true}}
-                    @selectedClassificationId={{this.currentOrganizationModel.classification.id}}
-                    @error={{hasError}}
-                    @id="recognized-worship-type-select"
-                  />
-                </:content>
-              </Item>
-            {{/if}}
-            {{#if this.currentOrganizationModel.isWorshipService}}
-              <Item @labelFor="denomination">
-                <:label>Strekking</:label>
-                <:content>
-                  <TrimInput
-                    @width="block"
-                    @value={{this.currentOrganizationModel.denomination}}
-                    @onUpdate={{fn
-                      (mut this.currentOrganizationModel.denomination)
-                    }}
-                    id="denomination"
-                  />
-                </:content>
-              </Item>
-              <Item @alignTop={{true}}>
-                <:label>Grensoverschrijvend</:label>
-                <:content>
-                  <AuRadioGroup
-                    @alignment="inline"
-                    @name="is-cross-border"
-                    @selected={{boolean
-                      this.currentOrganizationModel.crossBorder
-                    }}
-                    @onChange={{fn
-                      (mut this.currentOrganizationModel.crossBorder)
-                    }}
-                    as |Group|
-                  >
-                    <Group.Radio @value={{true}}>Ja</Group.Radio>
-                    <Group.Radio @value={{false}}>Nee</Group.Radio>
-                  </AuRadioGroup>
-                </:content>
-              </Item>
-            {{/if}}
-            {{#if
-              (and
-                this.currentOrganizationModel.isMunicipality
-                this.currentOrganizationModel.scope.locatedWithin
-              )
-            }}
-              <Item @labelFor="regio">
-                <:label>Regio</:label>
-                <:content>
-                  {{this.currentOrganizationModel.scope.locatedWithin}}
-                </:content>
-              </Item>
-            {{/if}}
             {{#if
               (or
                 this.currentOrganizationModel.isAdministrativeUnit
@@ -274,7 +220,7 @@
               )
             }}
               <Item
-                @labelFor="scope"
+                @labelFor="locations-select"
                 @required={{true}}
                 @errorMessage={{this.currentOrganizationModel.error.scope.message}}
               >
@@ -282,7 +228,7 @@
                 <:content>
                   <LocationMultipleSelect
                     @selected={{this.locations}}
-                    @onChange={{fn (mut this.locations)}}
+                    @onChange={{this.setLocations}}
                     @disabled={{false}}
                     @error={{this.currentOrganizationModel.error.scope}}
                     @id="locations-select"
@@ -361,6 +307,10 @@
                     {{on "input" this.setKbo}}
                   />
                 </:content>
+                <:helpText>
+                  Een nieuwe organisatie wordt toegevoegd nadat ze officieel
+                  geregistreerd is en een KBO-nummer heeft.
+                </:helpText>
                 <:error as |error|>
                   <Error::KboNumber @error={{error}} />
                 </:error>
@@ -382,6 +332,64 @@
                   id="sharepoint-identifier"
                 />
               </:content>
+            </Item>
+          </:right>
+        </Card.Columns>
+      </:card>
+    </EditCard>
+
+    <EditCard @containsRequiredFields={{false}}>
+      <:title>Besluit tot oprichting</:title>
+      <:card as |Card|>
+        <Card.Columns>
+          <:left as |Item|>
+            <Item
+              @labelFor="change-event-decision-link-0"
+              @errorMessage={{@model.decision.error.documentLinks.message}}
+            >
+              <:label>Link naar het besluit</:label>
+              <:content>
+                <ChangeEvents::DecisionDocumentLinks
+                  @decision={{@model.decision}}
+                  @errors={{@model.decision.error.documentLinks}}
+                />
+              </:content>
+              <:helpText>
+                Een link naar het besluit waarmee de organisatie werd opgericht,
+                bijvoorbeeld op de website van het bestuur.
+              </:helpText>
+            </Item>
+            <Item
+              @labelFor="decision-publication-date"
+              @errorMessage={{@model.decision.error.publicationDate.message}}
+            >
+              <:label>Publicatiedatum van het besluit</:label>
+              <:content as |hasError|>
+                <Datepicker
+                  @id="decision-publication-date"
+                  @value={{@model.decision.publicationDate}}
+                  @onChange={{fn (mut @model.decision.publicationDate)}}
+                  @error={{hasError}}
+                />
+              </:content>
+            </Item>
+          </:left>
+          <:right as |Item|>
+            <Item @labelFor="request-reason" @alignTop={{true}}>
+              <:label>Toelichting bij de aanvraag</:label>
+              <:content>
+                <AuTextarea
+                  id="request-reason"
+                  @width="block"
+                  value={{this.reason}}
+                  rows="5"
+                  {{on "input" this.setReason}}
+                />
+              </:content>
+              <:helpText>
+                Optioneel. ABB ziet deze toelichting bij het valideren van de
+                aanvraag.
+              </:helpText>
             </Item>
           </:right>
         </Card.Columns>
@@ -415,173 +423,5 @@
         </p>
       </div>
     {{/if}}
-
-    {{#if
-      (and
-        this.currentOrganizationModel.classification
-        (or
-          this.currentOrganizationModel.isWorshipAdministrativeUnit
-          this.currentOrganizationModel.isAgb
-          this.currentOrganizationModel.isApb
-          this.membershipFields.length
-        )
-      )
-    }}
-      <EditCard @containsRequiredFields={{this.containsRequiredFields}}>
-        <:title>Gerelateerde organisaties</:title>
-        <:card as |Card|>
-          <AuHelpText @skin="tertiary" class="au-u-margin-bottom-small">
-            Op de pagina ‘Gerelateerde organisaties’ worden zowel onderstaande
-            als andere relaties getoond.
-          </AuHelpText>
-          {{#if this.currentOrganizationModel.isWorshipAdministrativeUnit}}
-            <Card.Columns>
-              <:left as |Item|>
-                {{#if this.currentOrganizationModel.isCentralWorshipService}}
-                  <Item @labelFor="related-worship-services">
-                    <:label>Bestuur van de eredienst</:label>
-                    <:content>
-                      <WorshipServiceMultipleSelect
-                        @selected={{this.worshipServices}}
-                        @onChange={{this.addWorshipServices}}
-                        id="related-worship-services"
-                      />
-                    </:content>
-                  </Item>
-                {{/if}}
-                {{#if this.currentOrganizationModel.hasCentralWorshipService}}
-                  <Item
-                    @labelFor="related-central-worship-service"
-                    @required={{false}}
-                  >
-                    <:label>Centraal bestuur</:label>
-                    <:content as |hasError|>
-                      <CentralWorshipSelect
-                        @selected={{this.centralWorshipService}}
-                        @onChange={{this.addCentralWorshipService}}
-                        @error={{hasError}}
-                        @id="related-central-worship-service"
-                      />
-                    </:content>
-                  </Item>
-                {{/if}}
-                <Item
-                  @labelFor="related-representative-body"
-                  @required={{true}}
-                  @errorMessage={{this.representativeBodyError}}
-                >
-                  <:label>Representatief orgaan</:label>
-                  <:content as |hasError|>
-                    <RepresentativeBodySelect
-                      @selected={{this.representativeBody}}
-                      @onChange={{this.addRepresentativeBody}}
-                      @error={{hasError}}
-                      @id="related-representative-body"
-                    />
-                  </:content>
-                </Item>
-              </:left>
-            </Card.Columns>
-          {{else}}
-            <Card.Columns>
-              <:left as |Item|>
-                {{! The AGB/APB blocks render their founder field themselves,
-                    the other fields come from the per-type configuration. }}
-                {{#if this.currentOrganizationModel.isAgb}}
-                  <Item
-                    @labelFor="related-gemeente"
-                    @required={{true}}
-                    @errorMessage={{this.municipalityError}}
-                  >
-                    <:label>Gemeente</:label>
-                    <:content as |hasError|>
-                      <MunicipalitySelect
-                        @selected={{this.municipality}}
-                        @onChange={{this.setMunicipality}}
-                        @error={{hasError}}
-                        @id="related-gemeente"
-                      />
-                    </:content>
-                  </Item>
-
-                  {{#if this.municipality}}
-                    <Item>
-                      <:label>Provincie</:label>
-                      <:content>{{this.province.abbName}}</:content>
-                    </Item>
-                  {{/if}}
-
-                  <Item @required={{true}}>
-                    <:label>Werd opgericht door</:label>
-                    <:content>{{this.municipality.abbName}}</:content>
-                  </Item>
-                {{else if this.currentOrganizationModel.isApb}}
-                  <Item
-                    @labelFor="related-province"
-                    @required={{true}}
-                    @errorMessage={{this.provinceError}}
-                  >
-                    <:label>Provincie</:label>
-                    <:content as |hasError|>
-                      <ProvinceOrganizationSelect
-                        @selected={{this.province}}
-                        @allowClear={{true}}
-                        @onChange={{this.setProvince}}
-                        @error={{hasError}}
-                        @id="related-province"
-                      />
-                    </:content>
-                  </Item>
-
-                  <Item @labelFor="founder-province" @required={{true}}>
-                    <:label>Werd opgericht door</:label>
-                    <:content>{{this.province.abbName}}</:content>
-                  </Item>
-                {{/if}}
-
-                {{! The related-organization fields per organization type }}
-                {{#each this.membershipFields key="key" as |field|}}
-                  <Item
-                    @labelFor={{field.key}}
-                    @required={{field.required}}
-                    @errorMessage={{field.error}}
-                  >
-                    <:label>{{field.label}}</:label>
-                    <:content as |hasError|>
-                      {{#if field.multiple}}
-                        <OrganizationMultipleSelect
-                          @selected={{field.selectedOrganizations}}
-                          @onChange={{fn this.addOrganizationsForField field}}
-                          @classificationCodes={{field.classificationCodes}}
-                          @error={{hasError}}
-                          @id={{field.key}}
-                        />
-                      {{else}}
-                        <OrganizationSelect
-                          @selected={{field.selectedOrganization}}
-                          @onChange={{fn this.setOrganizationForField field}}
-                          @classificationCodes={{field.classificationCodes}}
-                          @allowClear={{true}}
-                          @error={{hasError}}
-                          @id={{field.key}}
-                        />
-                      {{/if}}
-                    </:content>
-                  </Item>
-                {{/each}}
-              </:left>
-            </Card.Columns>
-          {{/if}}
-        </:card>
-      </EditCard>
-    {{/if}}
   </form>
 </div>
-
-{{#if this.isRelatedNonActiveOrganization}}
-  <ConfirmationModal
-    @message={{confirmation-message-text "nonActiveRelatedOrganization"}}
-    @onConfirm={{this.confirmRelateNonActiveOrganization}}
-    @onCancel={{this.cancelRelateNonActiveOrganization}}
-  />
-{{/if}}

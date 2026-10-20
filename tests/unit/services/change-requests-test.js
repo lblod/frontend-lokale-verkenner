@@ -1368,6 +1368,48 @@ module('Unit | Service | change-requests', function (hooks) {
     });
   });
 
+  module('a creation', function () {
+    test('a request without target carries no target relationship and keeps the reason', async function (assert) {
+      const organization = this.store.createRecord('administrative-unit', {
+        legalName: 'AGB Test',
+      });
+      this.fetch.resolves(
+        jsonResponse(201, {
+          data: {
+            type: 'change-requests',
+            id: REQUEST_ID,
+            attributes: { status: 'ingediend', aggregate: 'new-organisation' },
+          },
+        }),
+      );
+
+      const error = await rejection(
+        this.service.submit('new-organisation', null, [organization], {
+          reason: 'Opgericht bij besluit',
+        }),
+      );
+
+      const document = JSON.parse(this.fetch.lastCall.args[1].body);
+      assert.strictEqual(document.data.relationships, undefined, 'no target');
+      assert.strictEqual(
+        document.data.attributes.aggregate,
+        'new-organisation',
+      );
+      assert.strictEqual(
+        document.data.attributes.reason,
+        'Opgericht bij besluit',
+      );
+      assert.strictEqual(document.data.attributes.operations[0].op, 'create');
+      assert.true(error.held);
+      assert.true(error.waiting, 'it waits for ABB');
+      assert.strictEqual(error.requestId, REQUEST_ID);
+      assert.true(
+        organization.isDestroying,
+        'the new record exists in the request only',
+      );
+    });
+  });
+
   module('listing and deciding', function () {
     const DOCUMENT = {
       type: 'change-requests',

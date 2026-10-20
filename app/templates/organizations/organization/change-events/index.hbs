@@ -3,10 +3,55 @@
   <:subtitle>{{@model.organization.abbName}}
     ({{@model.organization.classification.label}})</:subtitle>
   <:action>
-    {{! Read-only until this page is switched to change requests }}
-    <ReportWrongData />
+    <SecuredArea>
+      <:edit>
+        <Button::New @route="organizations.organization.change-events.new" />
+      </:edit>
+      <:readOnly>
+        <ReportWrongData />
+      </:readOnly>
+    </SecuredArea>
   </:action>
 </PageHeader>
+
+{{#if @model.pendingRequests.length}}
+  <div class="au-o-box au-u-padding-top-none" data-test-pending-requests>
+    <AuHeading @level="2" @skin="4" class="au-u-margin-bottom-small">
+      Aanvragen in verwerking
+    </AuHeading>
+    <AuTable @size="small">
+      <:header>
+        <tr>
+          <th>Type</th>
+          <th>Datum aanvraag</th>
+          <th>Status aanvraag</th>
+          <th></th>
+        </tr>
+      </:header>
+      <:body>
+        {{#each @model.pendingRequests as |request|}}
+          <tr>
+            <td>
+              Veranderingsgebeurtenis
+              <span class="au-u-muted">
+                (niet beschikbaar: aanvraag in verwerking)
+              </span>
+            </td>
+            <td>{{date-format request.attributes.created}}</td>
+            <td>
+              <ChangeRequests::Status @status={{request.attributes.status}} />
+            </td>
+            <td>
+              <AuLink @route="aanvragen.aanvraag" @model={{request.id}}>
+                Bekijk aanvraag
+              </AuLink>
+            </td>
+          </tr>
+        {{/each}}
+      </:body>
+    </AuTable>
+  </div>
+{{/if}}
 
 <AuDataTable
   @content={{@model.changeEventResults}}

@@ -4,6 +4,7 @@ import { query } from '@warp-drive/legacy/compat/builders';
 
 export default class OrganizationsOrganizationChangeEventsIndexRoute extends Route {
   @service store;
+  @service changeRequests;
 
   queryParams = {
     page: { refreshModel: true },
@@ -33,6 +34,30 @@ export default class OrganizationsOrganizationChangeEventsIndexRoute extends Rou
     return {
       organization: this.modelFor('organizations.organization'),
       changeEventResults,
+      pendingRequests: await this.loadPendingRequests(organizationId),
     };
+  }
+
+  /**
+   * The change-event requests about the organisation that still wait for
+   * ABB: shown with the events, as the designs ask. An empty list when the
+   * service does not answer: the events are shown all the same.
+   */
+  async loadPendingRequests(organizationId) {
+    try {
+      const { requests } = await this.changeRequests.list({
+        target: organizationId,
+        kind: 'change-event',
+        status: 'ingediend,informatie-gevraagd',
+        size: 100,
+      });
+      return requests;
+    } catch (error) {
+      console.warn(
+        'The pending change-event requests could not be loaded:',
+        error,
+      );
+      return [];
+    }
   }
 }

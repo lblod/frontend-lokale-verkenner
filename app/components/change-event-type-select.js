@@ -147,6 +147,12 @@ export default class ChangeEventTypeSelectComponent extends Component {
       );
     }
 
+    // The types the caller leaves out, e.g. the ones about several
+    // organisations that a change request cannot carry
+    if (Array.isArray(this.args.excludeIds)) {
+      types = types.filter((t) => !this.isIdInList(t.id, this.args.excludeIds));
+    }
+
     return types;
   });
 

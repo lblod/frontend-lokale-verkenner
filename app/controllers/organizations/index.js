@@ -6,6 +6,17 @@ import { tracked } from '@glimmer/tracking';
 export default class OrganizationsIndexController extends Controller {
   @service router;
   @service currentSession;
+  @service changeRequests;
+
+  /**
+   * Whether the session may request a new organisation: ABB, or an
+   * organisation that manages others ("Wie beheert"), as the change-request
+   * service decides.
+   */
+  get canCreateOrganization() {
+    const rights = this.changeRequests.rights;
+    return Boolean(rights?.canDecide || rights?.canCreate?.length);
+  }
 
   queryParams = [
     'page',

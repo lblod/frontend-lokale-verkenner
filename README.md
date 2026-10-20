@@ -135,16 +135,17 @@ still contain such a write (see the table) are closed.
 
 ### Which pages edit
 
-| Page                                                                           | Status                                                                                                   |
-| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| Kerngegevens (`core-data/edit`)                                                | change request, aggregate `organization-core-data`                                                       |
-| Vestigingen (`sites/new`, `sites/site/edit`)                                   | change request, aggregate `site`                                                                         |
-| Veranderingsgebeurtenissen (`change-events/new`, `change-events/details/edit`) | not switched yet: the edit routes redirect to `unauthorized` and the pages show no edit action           |
-| Gerelateerde organisaties (`related-organizations/edit`)                       | not switched yet: idem                                                                                   |
-| Betrokken lokale besturen (`local-involvements/edit`, worship)                 | not switched yet: idem                                                                                   |
-| Bestuursorganen (`governing-bodies/governing-body/edit`)                       | read-only, mastered by LMB: the edit route redirects and the page shows no edit action                   |
-| Nieuwe organisatie (`organizations/new`)                                       | hidden: the route redirects, nothing links to it                                                         |
-| Nieuwe positie (`people/new-position`)                                         | a static notice without a save; its guard reads `canEdit`, which is false outside the organisation pages |
+| Page                                                           | Status                                                                                                   |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Kerngegevens (`core-data/edit`)                                | change request, aggregate `organization-core-data`                                                       |
+| Vestigingen (`sites/new`, `sites/site/edit`)                   | change request, aggregate `site`                                                                         |
+| Veranderingsgebeurtenissen (`change-events/new`)               | change request, aggregate `change-event` (see [The request pages](#the-request-pages))                   |
+| Veranderingsgebeurtenissen (`change-events/details/edit`)      | not switched yet: the edit route redirects to `unauthorized` and the page shows no edit action           |
+| Gerelateerde organisaties (`related-organizations/edit`)       | not switched yet: idem                                                                                   |
+| Betrokken lokale besturen (`local-involvements/edit`, worship) | not switched yet: idem                                                                                   |
+| Bestuursorganen (`governing-bodies/governing-body/edit`)       | read-only, mastered by LMB: the edit route redirects and the page shows no edit action                   |
+| Nieuwe organisatie (`organizations/new`)                       | change request, aggregate `new-organisation` (see [The request pages](#the-request-pages))               |
+| Nieuwe positie (`people/new-position`)                         | a static notice without a save; its guard reads `canEdit`, which is false outside the organisation pages |
 
 A page is switched by replacing its chain of `saveRecord` calls with one
 `submit` and by handling `ChangeRequestError` as the switched pages do,
@@ -190,8 +191,44 @@ organisation and ABB only; the pages never name a person, only the
 organisation. The labels of statuses, kinds, steps and fields live in
 `app/constants/change-requests.js`.
 
-The forms that submit a creation or a change-event request are not built
-yet: those requests are made through the service's API for now.
+`/organisaties/nieuwe-organisatie` ("Voeg organisatie toe") is the creation
+form: OP's form without the related-organisation fields and the worship
+types, with the link to the besluit tot oprichting and an explanation for
+ABB. It opens for who may request an organisation (`changeRequests.rights`:
+ABB, or an organisation that manages others) and offers only the
+classifications the service allows (`ClassificationSelect @allowedIds`). It
+submits the organisation, its KBO and SharePoint identifiers, its primary
+site with address and contact points, and the oprichting as a change event
+with its decision as one request (aggregate `new-organisation`, no target):
+ABB's request is applied at once and the page goes to the new organisation;
+anyone else's waits and the page goes to the request. A KBO number that is
+registered or requested already is shown on the field. The werkingsgebied
+comes from the scope-of-operation service, as in OP (the stack runs it). The
+related organisations of the new one (its founder) are not part of the
+request yet.
+
+`/organisaties/:id/veranderingsgebeurtenissen/nieuw` is the change-event
+form: OP's form for one organisation (the types about several organisations,
+fusie and samenvoeging, are left out through `ChangeEventTypeSelect
+@excludeIds`), with the links to the besluit and an explanation for ABB. It
+submits the event, its result (the resulting status, legal form,
+werkingsgebied, qualifications or new name, as OP derives them) and the
+fields of the organisation the event changes as one request (aggregate
+`change-event`, target the organisation); the organisation only follows the
+event when no later event is recorded yet, as in OP. ABB's request is applied
+at once and the page goes to the event; anyone else's waits and the page goes
+to the request. The overview of the organisation's events lists the requests
+that still wait, with a link to each. Not in the request: ending the
+relations of a dissolved organisation (OP does that on save; it follows with
+the related-organisations work).
+
+### The entry from Loket
+
+`/mijn-organisatie` lands the user on the kerngegevens of the organisation
+they are logged in for (the session's group), so Loket can link to it
+without knowing the organisation's id. With `LOKET_URL` set in the
+deployment (`loketUrl` in the config) the navigation bar starts with a
+"← Loket" link; without it no link is shown.
 
 ### The `change-requests` service
 
