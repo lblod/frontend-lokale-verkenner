@@ -207,7 +207,7 @@ export default class OrganizationsOrganizationSitesNewController extends Control
     try {
       await this.router.refresh('organizations.organization.sites.new');
     } catch (error) {
-      reportHeldRequest(this.toaster, error);
+      reportHeldRequest(this.toaster, error, heldRequest.waiting);
       return;
     }
     this.formRevision += 1;

@@ -19,10 +19,16 @@ const SUBMITTED = 'ingediend';
  */
 const FAILED = 'mislukt';
 /**
- * The statuses of an approved and of a withdrawn request.
+ * The statuses of an applied request (`afgehandeld`; `goedgekeurd` is the
+ * decision that precedes the apply, recorded in the same update), of a
+ * withdrawn one and of a rejected one.
  */
+const APPLIED = 'afgehandeld';
 const APPROVED = 'goedgekeurd';
 const WITHDRAWN = 'ingetrokken';
+const REJECTED = 'afgekeurd';
+
+const isApplied = (status) => status === APPLIED || status === APPROVED;
 
 const APPLY_FAILED_MESSAGE =
   'De wijziging kon niet doorgevoerd worden: het toepassen ervan mislukte. Je aanvraag is bewaard. Pas ze opnieuw toe, of herlaad de pagina en controleer de gegevens voor je opnieuw opslaat.';
@@ -39,19 +45,23 @@ const APPLY_FAILED_MESSAGE =
  * - `applied`: the service answered 2xx, so the change is in the application
  *   graph; the page must not offer a retry (it would apply the change twice)
  *   but leave and reload.
- * - `held`: the service recorded the request but did not apply it (status
- *   `ingediend`): someone else changed the same data since the page loaded
- *   it, and the request waits for a decision by ABB. `conflicts` lists the
- *   fields as the service reports them (`{ resource: { type, id }, key,
- *   base, current, proposed, 'competing-requests' }`). `submit` has
- *   discarded the local changes and reloaded the records; the page rebuilds
- *   its form from them, so that it shows the current values, and tells the
- *   user which fields were changed meanwhile. Saving again is a new request,
- *   next to the held one, which `withdraw` can withdraw. `reloadFailed` is
- *   set when the records could not be reloaded (`cause` is the error): the
- *   store then holds the values the page loaded, not the current ones, so a
- *   new save would start from stale values and the page blocks it until it
- *   is reloaded.
+ * - `held`: nothing is applied and the submitted records are back at the
+ *   backend's state. Either the service refused an edit because someone
+ *   else changed the same data since the page loaded it (a 409 with the
+ *   conflicts; `waiting` is false and `requestId` null: nothing was
+ *   recorded), or it recorded a request that waits for a decision by ABB (a
+ *   201 with status `ingediend`, for a request to register a new
+ *   organisation or a veranderingsgebeurtenis; `waiting` is true and
+ *   `requestId` the uuid of the request, which `withdraw` can withdraw).
+ *   `conflicts` lists the fields as the service reports them (`{ resource:
+ *   { type, id }, key, base, current, proposed, 'competing-requests' }`).
+ *   `submit` has discarded the local changes and reloaded the records; the
+ *   page rebuilds its form from them, so that it shows the current values,
+ *   and tells the user which fields were changed meanwhile. `reloadFailed`
+ *   is set when the records could not be reloaded (`cause` is the error):
+ *   the store then holds the values the page loaded, not the current ones,
+ *   so a new save would start from stale values and the page blocks it
+ *   until it is reloaded.
  * - `applyFailed`: a 409 for a request whose apply failed twice: the service
  *   kept it with status `mislukt`, and the apply may have stopped half-way,
  *   leaving the keys it changes empty on the master. A new request would
@@ -73,6 +83,7 @@ export class ChangeRequestError extends Error {
       errors = [],
       applied = false,
       held = false,
+      waiting = false,
       conflicts = [],
       reloadFailed = false,
       applyFailed = false,
@@ -86,6 +97,7 @@ export class ChangeRequestError extends Error {
     this.errors = errors;
     this.applied = applied;
     this.held = held;
+    this.waiting = waiting;
     this.conflicts = conflicts;
     this.reloadFailed = reloadFailed;
     this.applyFailed = applyFailed;
@@ -324,21 +336,23 @@ export default class ChangeRequestsService extends Service {
    * keys the page changed and holds the request when someone else changed
    * one of them in the meantime.
    *
-   * When the service applied the request (201, status `goedgekeurd`) the
+   * When the service applied the request (201, status `afgehandeld`) the
    * local changes are discarded and every record is reloaded from the
    * backend: the persisted ones with the relationships the request changed,
    * the new ones under the uuids the service minted (the client-side new
-   * records are unloaded). When it held the request (201, status
-   * `ingediend`) the local changes are discarded too, the new records
-   * unloaded and the persisted ones reloaded, and a `ChangeRequestError`
-   * with `held` set carries the conflicts and the id of the request. On a
-   * refusal (4xx) nothing is touched, so the page keeps its dirty state, and
-   * a `ChangeRequestError` carries the message of the service; a 409 for an
-   * apply that failed has `applyFailed` set and the id of the kept request,
-   * see `reapply`. An error after the service applied
-   * the request (the answer lacks the id of a new record, a reload fails) is
-   * a `ChangeRequestError` with `applied` set: the change is in the
-   * application graph, the page must leave and reload instead of retrying.
+   * records are unloaded). When it refused a stale edit (409 with the
+   * conflicts) or held a request for ABB (201, status `ingediend`) the
+   * local changes are discarded too, the new records unloaded and the
+   * persisted ones reloaded, and a `ChangeRequestError` with `held` set
+   * carries the conflicts, whether a request waits for ABB (`waiting`) and
+   * its id. On another refusal (4xx) nothing is touched, so the page keeps
+   * its dirty state, and a `ChangeRequestError` carries the message of the
+   * service; a 409 for an apply that failed has `applyFailed` set and the
+   * id of the kept request, see `reapply`. An error after the service
+   * applied the request (the answer lacks the id of a new record, a reload
+   * fails) is a `ChangeRequestError` with `applied` set: the change is in
+   * the application graph, the page must leave and reload instead of
+   * retrying.
    *
    * @param {string} aggregate - name of the aggregate, e.g. `organization-core-data`
    * @param {string} target - uuid of the organisation the request is about
@@ -369,36 +383,35 @@ export default class ChangeRequestsService extends Service {
     });
 
     if (!response.ok) {
-      throw await ChangeRequestError.fromResponse(response);
+      const error = await ChangeRequestError.fromResponse(response);
+      const conflicts = conflictsOf(error.errors);
+      if (response.status === 409 && conflicts) {
+        // A stale edit: someone else changed the same data since the page
+        // loaded it. The service refused it without recording anything, so
+        // the page shows the current values and the user saves again.
+        throw await this.unapplied(serializer, records, {
+          status: response.status,
+          errors: error.errors,
+          conflicts,
+          waiting: false,
+          requestId: null,
+        });
+      }
+      throw error;
     }
 
     const body = await response.json();
     const attributes = body?.data?.attributes ?? {};
 
     if (attributes.status === SUBMITTED) {
-      const conflicts = Array.isArray(attributes.conflicts)
-        ? attributes.conflicts
-        : [];
-      let cause;
-      try {
-        await this.reloadUnapplied(serializer, records);
-      } catch (error) {
-        // Still nothing is applied, but the store now holds the values the
-        // page loaded instead of the current ones, and a new save would
-        // start from them: the page asks for a reload.
-        console.error(
-          'The records of a held change request could not be reloaded:',
-          error,
-        );
-        cause = error;
-      }
-      throw new ChangeRequestError(heldMessage(conflicts), {
+      // Recorded, not applied: the request waits for a decision by ABB
+      throw await this.unapplied(serializer, records, {
         status: response.status,
-        held: true,
-        conflicts,
+        conflicts: Array.isArray(attributes.conflicts)
+          ? attributes.conflicts
+          : [],
+        waiting: true,
         requestId: body?.data?.id ?? null,
-        reloadFailed: cause !== undefined,
-        cause,
       });
     }
 
@@ -477,8 +490,45 @@ export default class ChangeRequestsService extends Service {
   }
 
   /**
-   * Bring the store back to the backend's state after a request the service
-   * recorded without applying it, so that the page shows the current values:
+   * The error for a save the service did not apply: the store is brought
+   * back to the backend's state (`reloadUnapplied`) and the `held` error
+   * built, with `reloadFailed` set when that failed.
+   *
+   * @returns {Promise<ChangeRequestError>}
+   */
+  async unapplied(
+    serializer,
+    records,
+    { status, errors = [], conflicts, waiting, requestId },
+  ) {
+    let cause;
+    try {
+      await this.reloadUnapplied(serializer, records);
+    } catch (error) {
+      // Still nothing is applied, but the store now holds the values the
+      // page loaded instead of the current ones, and a new save would
+      // start from them: the page asks for a reload.
+      console.error(
+        'The records of an unapplied change request could not be reloaded:',
+        error,
+      );
+      cause = error;
+    }
+    return new ChangeRequestError(heldMessage(conflicts, waiting), {
+      status,
+      errors,
+      held: true,
+      waiting,
+      conflicts,
+      requestId,
+      reloadFailed: cause !== undefined,
+      cause,
+    });
+  }
+
+  /**
+   * Bring the store back to the backend's state after a save the service
+   * did not apply, so that the page shows the current values:
    * the local changes are discarded, the new records, which exist in the
    * request only, are unloaded, and the persisted records are reloaded with
    * the relationships the request changed. A conflict is always about a key
@@ -586,8 +636,8 @@ export default class ChangeRequestsService extends Service {
       reapplyMessage,
     );
     // A 409 for a request that is no longer `mislukt` carries its status:
-    // `goedgekeurd` when another tab applied it meanwhile.
-    if (error.status === 409 && requestStatusOf(error.errors) === APPROVED) {
+    // `afgehandeld` when another tab applied it meanwhile.
+    if (error.status === 409 && isApplied(requestStatusOf(error.errors))) {
       return;
     }
     throw error;
@@ -811,6 +861,17 @@ function changedRelationshipKeys(serializer, cache, record) {
 }
 
 /**
+ * The conflicts of a 409 for a stale edit (`meta.conflicts` of the error),
+ * or null when the error is not one.
+ */
+function conflictsOf(errors) {
+  return (
+    errors.find((error) => Array.isArray(error?.meta?.conflicts))?.meta
+      .conflicts ?? null
+  );
+}
+
+/**
  * The request a JSON:API error is about (`meta['change-request']`, `{ id,
  * status }`), e.g. the request whose apply failed.
  */
@@ -839,9 +900,10 @@ function requestStatusOf(errors) {
 function withdrawMessage(status, errors) {
   if (status === 409) {
     switch (requestStatusOf(errors)) {
+      case APPLIED:
       case APPROVED:
         return 'ABB heeft je aanvraag intussen goedgekeurd; ze kan niet meer ingetrokken worden.';
-      case 'afgekeurd':
+      case REJECTED:
         return 'ABB heeft je aanvraag intussen afgekeurd; ze kan niet meer ingetrokken worden.';
       case FAILED:
         return 'ABB heeft je aanvraag intussen goedgekeurd, maar het toepassen ervan mislukte; ze kan niet meer ingetrokken worden.';
@@ -866,19 +928,26 @@ function reapplyMessage(status, errors) {
   if (status >= 500 || changeRequestOf(errors)?.status === FAILED) {
     return undefined;
   }
-  if (status === 409 && changeRequestOf(errors)?.status === APPROVED) {
+  if (status === 409 && isApplied(changeRequestOf(errors)?.status)) {
     return 'Intussen werd een andere wijziging van deze organisatie doorgevoerd, daarom wordt je aanvraag niet meer toegepast. Herlaad de pagina en voer je wijziging opnieuw in.';
   }
   return `Je aanvraag kon niet opnieuw toegepast worden (HTTP ${status}). Herlaad de pagina en voer je wijziging opnieuw in.`;
 }
 
-function heldMessage(conflicts) {
+/**
+ * The message of a save the service did not apply: a request that waits for
+ * ABB, or a stale edit the service refused.
+ */
+function heldMessage(conflicts, waiting) {
   const keys = [...new Set(conflicts.map(({ key }) => key))];
   const reason =
     keys.length > 0
       ? ` omdat iemand anders intussen dezelfde gegevens heeft gewijzigd (${keys.join(', ')})`
       : '';
-  return `De wijziging werd niet doorgevoerd${reason}. De aanvraag wacht op een beslissing van ABB.`;
+  const next = waiting
+    ? 'De aanvraag wacht op een beslissing van ABB.'
+    : 'Het formulier toont nu de huidige gegevens; voer je wijziging opnieuw in.';
+  return `De wijziging werd niet doorgevoerd${reason}. ${next}`;
 }
 
 function resourceIdentifier(serializer, snapshot, lids) {

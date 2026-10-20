@@ -5,18 +5,21 @@ import { dropTask } from 'ember-concurrency';
 import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
 
 /**
- * The notice of a save the change-request service held for a decision by ABB
- * (`ChangeRequestError.held`): which fields someone else changed meanwhile,
- * that the request waits for ABB, and that saving the same fields again
- * replaces it (the service then withdraws it; saving only part of them leaves
- * it waiting next to the new change), with a button to withdraw it.
+ * The notice of a save the change-request service did not apply
+ * (`ChangeRequestError.held`): which fields someone else changed meanwhile
+ * and, for a request that waits for ABB, that it waits and that saving the
+ * same fields again replaces it (the service then withdraws it; saving only
+ * part of them leaves it waiting next to the new change), with a button to
+ * withdraw it. A stale edit the service refused waits for no one: the user
+ * enters the change again.
  *
  * Arguments:
- * - `@held`: null, or `{ id, fields, reloadFailed }`: the uuid of the held
- *   request (null when the service did not give it, then it cannot be
- *   withdrawn here), the labels of the fields in conflict, and whether the
- *   records could not be reloaded afterwards, in which case the notice asks
- *   for a reload instead of showing its block.
+ * - `@held`: null, or `{ id, fields, reloadFailed, waiting }`: the uuid of
+ *   the request that waits (null when the service did not give it, or when
+ *   none waits; then it cannot be withdrawn here), the labels of the fields
+ *   in conflict, whether the records could not be reloaded afterwards, in
+ *   which case the notice asks for a reload instead of showing its block,
+ *   and whether a request waits for ABB.
  * - block: what the page did with its form, e.g. that it shows the stored
  *   values again.
  */
@@ -32,7 +35,8 @@ export default class ErrorChangeRequestHeldComponent extends Component {
   @tracked failure = null;
 
   get canWithdraw() {
-    return Boolean(this.args.held?.id) && !this.withdrawn;
+    const { held } = this.args;
+    return Boolean(held?.waiting && held?.id) && !this.withdrawn;
   }
 
   get withdrawn() {

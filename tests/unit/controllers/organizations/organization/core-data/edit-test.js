@@ -589,6 +589,7 @@ module(
           id: REQUEST_ID,
           fields: ['Juridische naam', 'SharePoint identificator', 'id-name'],
           reloadFailed: false,
+          waiting: false,
         },
         'the request, to withdraw it, and the labels of the page, the key for a field without one',
       );
@@ -653,7 +654,7 @@ module(
 
       assert.true(
         this.warning.calledOnceWith(
-          sinon.match('Je aanvraag wacht op een beslissing van ABB.'),
+          sinon.match('Herlaad de pagina en voer je wijziging opnieuw in.'),
           'Wijziging niet doorgevoerd',
         ),
         'the toast outlives the page',

@@ -109,39 +109,46 @@ export function conflictingFields(conflicts, labels) {
 }
 
 /**
- * The notice of a held change request, as `Error::ChangeRequestHeld` takes
- * it: the uuid of the request (to withdraw it), the fields in conflict as
- * the page names them, and whether the records could not be reloaded.
+ * The notice of a save the service did not apply, as
+ * `Error::ChangeRequestHeld` takes it: the uuid of the request that waits
+ * for ABB (to withdraw it; null for a stale edit the service refused),
+ * whether a request waits at all, the fields in conflict as the page names
+ * them, and whether the records could not be reloaded.
  *
  * @param {ChangeRequestError} error - a held one
  * @param {Array<[Model, Object<string, string>]>} labels - see
  *     `conflictingFields`
- * @returns {{ id: string|null, fields: string[], reloadFailed: boolean }}
+ * @returns {{ id: string|null, fields: string[], reloadFailed: boolean, waiting: boolean }}
  */
 export function heldRequestNotice(error, labels) {
   return {
     id: error.requestId,
     fields: conflictingFields(error.conflicts, labels),
     reloadFailed: error.reloadFailed,
+    waiting: error.waiting,
   };
 }
 
 /**
- * Tell the user that the change request of the last save waits for ABB when
- * the page could not show its notice: refreshing the page after the hold
- * failed (the router then shows the error page) or was overtaken by another
- * transition. The toast outlives the page.
+ * Tell the user that the last save was not applied when the page could not
+ * show its notice: refreshing the page afterwards failed (the router then
+ * shows the error page) or was overtaken by another transition. The toast
+ * outlives the page.
  *
  * @param {Object} toaster - the toaster service
  * @param {Error} error - why the page could not be refreshed
+ * @param {boolean} [waiting] - whether a request waits for ABB (a stale
+ *     edit the service refused waits for no one: the user enters it again)
  */
-export function reportHeldRequest(toaster, error) {
+export function reportHeldRequest(toaster, error, waiting = false) {
   console.warn(
-    'The page could not be refreshed after the change request was held:',
+    'The page could not be refreshed after the change request was not applied:',
     error,
   );
   toaster.warning(
-    'Je wijziging werd niet doorgevoerd omdat iemand anders intussen dezelfde gegevens heeft gewijzigd. Je aanvraag wacht op een beslissing van ABB.',
+    waiting
+      ? 'Je wijziging werd niet doorgevoerd omdat iemand anders intussen dezelfde gegevens heeft gewijzigd. Je aanvraag wacht op een beslissing van ABB.'
+      : 'Je wijziging werd niet doorgevoerd omdat iemand anders intussen dezelfde gegevens heeft gewijzigd. Herlaad de pagina en voer je wijziging opnieuw in.',
     'Wijziging niet doorgevoerd',
   );
 }

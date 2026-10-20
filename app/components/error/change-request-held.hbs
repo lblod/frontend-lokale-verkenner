@@ -13,10 +13,12 @@
       {{else}}
         Je wijziging werd niet doorgevoerd.
       {{/if}}
-      {{#if this.withdrawn}}
-        Je hebt je aanvraag ingetrokken.
-      {{else}}
-        Je aanvraag wacht op een beslissing van ABB.
+      {{#if @held.waiting}}
+        {{#if this.withdrawn}}
+          Je hebt je aanvraag ingetrokken.
+        {{else}}
+          Je aanvraag wacht op een beslissing van ABB.
+        {{/if}}
       {{/if}}
       {{#if @held.reloadFailed}}
         De gegevens konden niet vernieuwd worden; herlaad de pagina voor je

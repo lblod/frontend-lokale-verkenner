@@ -265,7 +265,7 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
     try {
       await this.router.refresh('organizations.organization.sites.site');
     } catch (error) {
-      reportHeldRequest(this.toaster, error);
+      reportHeldRequest(this.toaster, error, heldRequest.waiting);
       return;
     }
     this.formRevision += 1;

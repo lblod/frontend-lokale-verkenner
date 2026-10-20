@@ -255,6 +255,7 @@ module(
         id: REQUEST_ID,
         fields: ['Primair correspondentieadres'],
         reloadFailed: false,
+        waiting: false,
       });
       assert.true(this.replaceWith.notCalled, 'the page stays');
       assert.true(this.warning.notCalled);

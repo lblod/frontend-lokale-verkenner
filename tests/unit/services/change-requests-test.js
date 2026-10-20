@@ -114,7 +114,7 @@ module('Unit | Service | change-requests', function (hooks) {
           type: 'change-requests',
           id: 'request-1',
           attributes: {
-            status: 'goedgekeurd',
+            status: 'afgehandeld',
             aggregate: body.data.attributes.aggregate,
             lids,
           },
@@ -161,7 +161,7 @@ module('Unit | Service | change-requests', function (hooks) {
             type: 'change-requests',
             id: 'request-2',
             attributes: {
-              status: 'goedgekeurd',
+              status: 'afgehandeld',
               aggregate: 'organization-core-data',
               lids: {},
               ...(superseded ? { superseded } : {}),
@@ -510,7 +510,7 @@ module('Unit | Service | change-requests', function (hooks) {
           data: {
             type: 'change-requests',
             id: 'request-1',
-            attributes: { status: 'goedgekeurd', aggregate: 'site', lids: {} },
+            attributes: { status: 'afgehandeld', aggregate: 'site', lids: {} },
           },
         }),
       );
@@ -964,6 +964,7 @@ module('Unit | Service | change-requests', function (hooks) {
 
       assert.true(error instanceof ChangeRequestError);
       assert.true(error.held);
+      assert.true(error.waiting, 'the request waits for ABB');
       assert.false(error.applied);
       assert.false(error.outcomeUnknown);
       assert.false(error.applyFailed);
@@ -1062,6 +1063,77 @@ module('Unit | Service | change-requests', function (hooks) {
       assert.true(error.held);
       assert.deepEqual(error.conflicts, []);
       assert.false(organization.hasDirtyAttributes);
+    });
+
+    test('a stale edit the service refuses (409 with the conflicts) is held without a request: the records are reloaded, nothing waits for ABB', async function (assert) {
+      const organization = this.store.push({
+        data: {
+          type: 'organization',
+          id: 'org-1',
+          attributes: { name: 'Gemeente Test' },
+        },
+      });
+      organization.name = 'Stad Test';
+      const conflicts = [
+        {
+          resource: { type: 'organizations', id: 'org-1' },
+          key: 'name',
+          base: 'Gemeente Test',
+          current: 'Gemeente Test (ABB)',
+          proposed: 'Stad Test',
+          'competing-requests': [],
+        },
+      ];
+      this.fetch.resolves(
+        jsonResponse(409, {
+          errors: [
+            {
+              status: '409',
+              title:
+                'The change conflicts with changes made since the form was loaded',
+              detail:
+                '1 conflict with what changed since the form was loaded; nothing was saved. Reload the form and save the change again',
+              meta: { conflicts, 'conflicts-token': '5ac5a8f6', competing: [] },
+            },
+          ],
+        }),
+      );
+      sinon.stub(this.adapter, 'findRecord').resolves({
+        data: {
+          type: 'organizations',
+          id: 'org-1',
+          attributes: { name: 'Gemeente Test (ABB)' },
+        },
+      });
+
+      let error;
+      try {
+        await this.service.submit('organization-core-data', 'org-1', [
+          organization,
+        ]);
+      } catch (e) {
+        error = e;
+      }
+
+      assert.true(error instanceof ChangeRequestError);
+      assert.true(
+        error.held,
+        'nothing is applied and the records are reloaded',
+      );
+      assert.false(error.waiting, 'no request waits for ABB');
+      assert.strictEqual(error.requestId, null, 'nothing was recorded');
+      assert.strictEqual(error.status, 409);
+      assert.deepEqual(error.conflicts, conflicts);
+      assert.false(error.applyFailed);
+      assert.false(error.reloadFailed);
+      assert.false(error.message.includes('ABB'));
+      assert.true(error.message.includes('(name)'));
+      assert.false(organization.hasDirtyAttributes);
+      assert.strictEqual(
+        organization.name,
+        'Gemeente Test (ABB)',
+        'the page sees the current name',
+      );
     });
   });
 
@@ -1210,7 +1282,7 @@ module('Unit | Service | change-requests', function (hooks) {
       );
 
       this.fetch.resolves(
-        stepError(409, { status: 'goedgekeurd', 'step-type': 'intrekking' }),
+        stepError(409, { status: 'afgehandeld', 'step-type': 'intrekking' }),
       );
       let error = await rejection(this.service.withdraw(REQUEST_ID));
       assert.true(error instanceof ChangeRequestError);
@@ -1235,7 +1307,7 @@ module('Unit | Service | change-requests', function (hooks) {
           data: {
             type: 'change-requests',
             id: REQUEST_ID,
-            attributes: { status: 'goedgekeurd' },
+            attributes: { status: 'afgehandeld' },
           },
         }),
       );
@@ -1266,7 +1338,7 @@ module('Unit | Service | change-requests', function (hooks) {
       assert.false(error.refused);
 
       this.fetch.resolves(
-        stepError(409, { status: 'goedgekeurd', 'step-type': 'hertoepassing' }),
+        stepError(409, { status: 'afgehandeld', 'step-type': 'hertoepassing' }),
       );
       assert.strictEqual(
         await this.service.reapply(REQUEST_ID),
@@ -1278,7 +1350,7 @@ module('Unit | Service | change-requests', function (hooks) {
         stepError(409, {
           'change-request': {
             id: '47b4a8ba-1229-409e-a326-ac4250defec4',
-            status: 'goedgekeurd',
+            status: 'afgehandeld',
           },
         }),
       );

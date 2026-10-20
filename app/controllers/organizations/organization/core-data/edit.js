@@ -349,7 +349,7 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
     try {
       await this.router.refresh('organizations.organization.core-data');
     } catch (error) {
-      reportHeldRequest(this.toaster, error);
+      reportHeldRequest(this.toaster, error, heldRequest.waiting);
       return;
     }
     this.formRevision += 1;

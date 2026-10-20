@@ -30,7 +30,7 @@ module('Integration | Component | error/change-request-held', function (hooks) {
   });
 
   test('it names the fields someone else changed and says that the request waits for ABB', async function (assert) {
-    this.held = { fields: ['Juridische naam', 'Straat'] };
+    this.held = { fields: ['Juridische naam', 'Straat'], waiting: true };
 
     await render(hbs`
         <Error::ChangeRequestHeld @held={{this.held}}>
@@ -51,6 +51,7 @@ module('Integration | Component | error/change-request-held', function (hooks) {
       id: REQUEST_ID,
       fields: ['Juridische naam'],
       reloadFailed: false,
+      waiting: true,
     };
     this.withdraw.resolves();
 
@@ -82,6 +83,7 @@ module('Integration | Component | error/change-request-held', function (hooks) {
       id: '6b8ed552-2bfb-417f-bf1e-4a1da50781aa',
       fields: ['Juridische naam'],
       reloadFailed: false,
+      waiting: true,
     });
     await settled();
 
@@ -92,7 +94,12 @@ module('Integration | Component | error/change-request-held', function (hooks) {
   });
 
   test('it says why the held request could not be withdrawn', async function (assert) {
-    this.held = { id: REQUEST_ID, fields: [], reloadFailed: false };
+    this.held = {
+      id: REQUEST_ID,
+      fields: [],
+      reloadFailed: false,
+      waiting: true,
+    };
     this.withdraw.rejects(
       new ChangeRequestError(
         'ABB heeft je aanvraag intussen goedgekeurd; ze kan niet meer ingetrokken worden.',
@@ -118,6 +125,7 @@ module('Integration | Component | error/change-request-held', function (hooks) {
       id: REQUEST_ID,
       fields: ['Straat'],
       reloadFailed: true,
+      waiting: true,
     };
 
     await render(hbs`
@@ -133,8 +141,31 @@ module('Integration | Component | error/change-request-held', function (hooks) {
       );
   });
 
+  test('it says nothing about ABB and offers no withdrawal for a stale edit the service refused', async function (assert) {
+    this.held = {
+      id: null,
+      fields: ['Juridische naam'],
+      reloadFailed: false,
+      waiting: false,
+    };
+
+    await render(hbs`
+        <Error::ChangeRequestHeld @held={{this.held}}>
+          Het formulier toont de gegevens zoals ze nu opgeslagen zijn.
+        </Error::ChangeRequestHeld>
+      `);
+
+    assert
+      .dom('[data-test-alert-message]')
+      .hasText(
+        'Je wijziging werd niet doorgevoerd omdat iemand anders intussen dezelfde gegevens heeft gewijzigd: Juridische naam. Het formulier toont de gegevens zoals ze nu opgeslagen zijn.',
+      );
+    assert.dom('[data-test-held-withdraw]').doesNotExist();
+    assert.dom('[data-test-held-competing]').doesNotExist();
+  });
+
   test('it leaves out the fields when the service named none', async function (assert) {
-    this.held = { fields: [] };
+    this.held = { fields: [], waiting: true };
 
     await render(hbs`<Error::ChangeRequestHeld @held={{this.held}} />`);
 

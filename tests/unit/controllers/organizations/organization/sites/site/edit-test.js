@@ -239,6 +239,7 @@ module(
             'Contactgegevens',
           ],
           reloadFailed: false,
+          waiting: false,
         },
         'the request and the labels of the page, each once',
       );
