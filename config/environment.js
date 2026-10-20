@@ -40,6 +40,9 @@ module.exports = function (environment) {
     appName: 'Lokale Verkenner',
     contactEmail: 'organisaties.abb@vlaanderen.be',
     environmentName: '{{ENVIRONMENT_NAME}}',
+    // Loket voor Lokale Besturen, where the "← Loket" link in the
+    // navigation bar goes; no link without it
+    loketUrl: '{{LOKET_URL}}',
 
     acmidm: {
       clientId: '{{OAUTH_API_KEY}}',

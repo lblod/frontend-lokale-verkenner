@@ -107,6 +107,9 @@ Router.map(function () {
     this.route('new', { path: '/nieuwe-organisatie' });
   });
 
+  // The entry from Loket: the organisation the user is logged in for
+  this.route('mijn-organisatie');
+
   this.route('aanvragen', function () {
     this.route('aanvraag', { path: '/:id' }, function () {
       this.route('extra-informatie');

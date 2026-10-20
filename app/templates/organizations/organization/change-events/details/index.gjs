@@ -4,11 +4,9 @@ import AuLinkExternal from '@appuniversum/ember-appuniversum/components/au-link-
 import AuList from '@appuniversum/ember-appuniversum/components/au-list';
 import AuTooltip from '@appuniversum/ember-appuniversum/components/au-tooltip';
 import DataCard from 'frontend-organization-portal/components/data-card';
-import EditButton from 'frontend-organization-portal/components/button/edit';
 import OrganizationStatus from 'frontend-organization-portal/components/organization-status';
 import PageHeader from 'frontend-organization-portal/components/page-header';
 import ReportWrongData from 'frontend-organization-portal/components/report-wrong-data';
-import SecuredArea from 'frontend-organization-portal/components/secured-area';
 import isAdditionalQualificationChangeEvent from 'frontend-organization-portal/helpers/is-additional-qualification-change-event';
 import dateFormat from 'frontend-organization-portal/helpers/date-format';
 import { isNameChangeType } from 'frontend-organization-portal/models/change-event-type';
@@ -24,16 +22,8 @@ import { isNameChangeType } from 'frontend-organization-portal/models/change-eve
         <:subtitle>{{@model.organization.abbName}}
           ({{@model.organization.classification.label}})</:subtitle>
         <:action>
-          <SecuredArea>
-            <:edit>
-              <EditButton
-                @route="organizations.organization.change-events.details.edit"
-              />
-            </:edit>
-            <:readOnly>
-              <ReportWrongData />
-            </:readOnly>
-          </SecuredArea>
+          {{! Editing a recorded event is not a change request yet }}
+          <ReportWrongData />
         </:action>
       </PageHeader>
 

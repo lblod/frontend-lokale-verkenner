@@ -1,6 +1,14 @@
 <AuToolbar @border="bottom" @size="small" @skin="tint">
   <nav aria-label="breadcrumbs">
     <ol class="au-c-list-horizontal au-c-list-horizontal--breadcrumbs">
+      {{#if (loket-url)}}
+        <li class="au-c-list-horizontal__item">
+          <a class="au-c-link" href={{(loket-url)}} data-test-loket-link>
+            <AuIcon @icon="arrow-left" @alignment="left" />
+            Loket
+          </a>
+        </li>
+      {{/if}}
       <li class="au-c-list-horizontal__item">
         <AuLink @route="index" @icon="arrow-left" @iconAlignment="left">
           Overzicht
