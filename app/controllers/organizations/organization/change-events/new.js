@@ -4,7 +4,7 @@ import { service } from '@ember/service';
 import { dropTask } from 'ember-concurrency';
 import {
   CHANGE_EVENT_TYPE,
-  isNameChange,
+  isNameChangeType,
 } from 'frontend-organization-portal/models/change-event-type';
 import { ORGANIZATION_STATUS } from 'frontend-organization-portal/models/organization-status-code';
 import isAdditionalQualificationChangeEvent from 'frontend-organization-portal/helpers/is-additional-qualification-change-event';
@@ -63,7 +63,7 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
   @tracked
   resultingName = null;
 
-  isNameChange = isNameChange;
+  isNameChangeType = isNameChangeType;
 
   get hasValidationErrors() {
     return this.model.changeEvent.error || this.model.decision?.error;
@@ -209,6 +209,12 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
 
     const shouldSaveDecision = await changeEvent.requiresDecisionInformation;
 
+    if (shouldSaveDecision) {
+      decision.documentLinks = decision.documentLinks.filter((link) =>
+        link.trim(),
+      );
+    }
+
     await changeEvent.validate();
 
     if (shouldSaveDecision) {
@@ -244,7 +250,7 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
       );
     }
 
-    if (isNameChange(changeEvent.type) && !this.resultingName) {
+    if (isNameChangeType(changeEvent.type) && !this.resultingName) {
       changeEvent.addError('resultingName', 'Vul de nieuwe naam in');
     }
 
@@ -346,7 +352,7 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
           RESULTING_STATUS_FOR_CHANGE_EVENT_TYPE[changeEvent.type.id] ??
           (await currentOrganization.organizationStatus)?.id;
 
-        const resultingName = isNameChange(changeEvent.type)
+        const resultingName = isNameChangeType(changeEvent.type)
           ? this.resultingName
           : null;
 
@@ -366,12 +372,77 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
       // Persist the original and resulting organization information
       await this.store.request(saveRecord(changeEvent));
 
+      for (const organization of await this.#organizationsDissolvedBy(
+        changeEvent,
+        currentOrganization,
+      )) {
+        await this.#endRelationsOf(organization, changeEvent.date);
+      }
+
       this.router.transitionTo(
         'organizations.organization.change-events.details',
         changeEvent.id,
       );
     }
   });
+
+  /**
+   * The organizations that became inactive through the change event: the
+   * organization itself for 'Ontbonden en/of vereffend', the merged away
+   * organizations for 'Fusie'.
+   */
+  async #organizationsDissolvedBy(changeEvent, currentOrganization) {
+    let organizations = [];
+    if (changeEvent.type.id === CHANGE_EVENT_TYPE.ONTBONDEN_EN_VEREFFEND) {
+      organizations = [currentOrganization];
+    } else if (changeEvent.type.id === CHANGE_EVENT_TYPE.FUSIE) {
+      organizations = (await changeEvent.originalOrganizations).slice();
+    }
+    return organizations.filter(
+      (organization) =>
+        organization.belongsTo('organizationStatus').id() ===
+        ORGANIZATION_STATUS.INACTIVE,
+    );
+  }
+
+  /**
+   * Set the date as end date of the relations of the organization that have
+   * none yet. Failures are logged, not raised: the dates can still be entered
+   * on the related organizations page.
+   */
+  async #endRelationsOf(organization, date) {
+    let memberships;
+    try {
+      ({ content: memberships } = await this.store.request(
+        queryBuilder('membership', {
+          'filter[:or:][member][:id:]': organization.id,
+          'filter[:or:][organization][:id:]': organization.id,
+          include: 'during',
+          page: { size: 500 },
+        }),
+      ));
+    } catch (error) {
+      console.error(
+        `Could not load the relations of organization ${organization.id} to end them`,
+        error,
+      );
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      memberships.map((membership) =>
+        endRelation(membership, date, this.store),
+      ),
+    );
+    results
+      .filter((result) => result.status === 'rejected')
+      .forEach((result) => {
+        console.error(
+          `Could not end a relation of organization ${organization.id}`,
+          result.reason,
+        );
+      });
+  }
 
   reset() {
     this.model.changeEvent.reset();
@@ -492,6 +563,28 @@ async function findMostRecentChangeEvent(store, organization) {
     return await mostRecentChangeEventResults.at(0)?.resultFrom;
   } else {
     return null;
+  }
+}
+
+// Creates the period when the relation has none, and then also saves the
+// relation to link it
+async function endRelation(membership, date, store) {
+  let period = membership.during;
+
+  if (period?.endDate) {
+    return;
+  }
+
+  const isNewPeriod = !period;
+  if (isNewPeriod) {
+    period = store.createRecord('period-of-time');
+    membership.during = period;
+  }
+  period.endDate = date;
+
+  await store.request(saveRecord(period));
+  if (isNewPeriod) {
+    await store.request(saveRecord(membership));
   }
 }
 
