@@ -1,0 +1,276 @@
+{{page-title (change-request-kind-label this.attributes.kind)}}
+{{breadcrumb
+  (change-request-kind-label this.attributes.kind)
+  route="aanvragen.aanvraag"
+  model=this.request.id
+}}
+
+<div class="au-o-box">
+  <PageHeader class="au-u-margin-bottom">
+    <:title>
+      {{change-request-kind-label this.attributes.kind}}
+      <ChangeRequests::Status
+        @status={{this.status}}
+        class="au-u-margin-left-small"
+        data-test-request-status
+      />
+      {{#if this.attributes.mine}}
+        <AuPill @skin="link" class="au-u-margin-left-tiny">Mijn aanvraag</AuPill>
+      {{/if}}
+    </:title>
+    <:subtitle>
+      Aangevraagd door
+      {{#if this.model.requester}}
+        <AuLink
+          @route="organizations.organization"
+          @model={{this.model.requester.id}}
+        >{{this.model.requester.abbName}}</AuLink>
+      {{else}}
+        een organisatie
+      {{/if}}
+      op
+      {{date-time-format this.attributes.created}}
+      {{#if this.attributes.target-name}}
+        &ndash;
+        {{#if this.model.targetOrganization}}
+          <AuLink
+            @route="organizations.organization"
+            @model={{this.model.targetOrganization.id}}
+          >{{this.attributes.target-name}}</AuLink>
+        {{else}}
+          {{this.attributes.target-name}}
+        {{/if}}
+        {{#if this.model.classification}}
+          ({{this.model.classification.label}})
+        {{/if}}
+      {{/if}}
+    </:subtitle>
+    <:action>
+      {{#if this.hasActions}}
+        <AuButtonGroup>
+          {{#if this.canApprove}}
+            <AuButton
+              @icon="check"
+              @iconAlignment="left"
+              data-test-action="goedkeuring"
+              {{on "click" (fn this.open "goedkeuring")}}
+            >
+              Goedkeuren
+            </AuButton>
+          {{/if}}
+          {{#if this.canReject}}
+            <AuButton
+              @skin="secondary"
+              @alert={{true}}
+              @icon="cross"
+              @iconAlignment="left"
+              data-test-action="afkeuring"
+              {{on "click" (fn this.open "afkeuring")}}
+            >
+              Afkeuren
+            </AuButton>
+          {{/if}}
+          {{#if this.canAskInformation}}
+            <AuButton
+              @skin="secondary"
+              @icon="question-circle"
+              @iconAlignment="left"
+              data-test-action="informatievraag"
+              {{on "click" (fn this.open "informatievraag")}}
+            >
+              Meer informatie opvragen
+            </AuButton>
+          {{/if}}
+          {{#if this.canReapply}}
+            <AuButton
+              @icon="renew"
+              @iconAlignment="left"
+              data-test-action="hertoepassing"
+              {{on "click" (fn this.open "hertoepassing")}}
+            >
+              Opnieuw toepassen
+            </AuButton>
+          {{/if}}
+          {{#if this.canAnswer}}
+            <AuButton
+              @icon="comment"
+              @iconAlignment="left"
+              data-test-action="informatieantwoord"
+              {{on "click" (fn this.open "informatieantwoord")}}
+            >
+              Beantwoorden
+            </AuButton>
+          {{/if}}
+          {{#if this.canContest}}
+            <AuButton
+              @skin="secondary"
+              @icon="comment"
+              @iconAlignment="left"
+              data-test-action="betwisting"
+              {{on "click" (fn this.open "betwisting")}}
+            >
+              Beslissing betwisten
+            </AuButton>
+          {{/if}}
+          {{#if this.canWithdraw}}
+            <AuButton
+              @skin="link"
+              @icon="bin"
+              @iconAlignment="left"
+              data-test-action="intrekking"
+              {{on "click" (fn this.open "intrekking")}}
+            >
+              Aanvraag intrekken
+            </AuButton>
+          {{/if}}
+        </AuButtonGroup>
+      {{/if}}
+    </:action>
+  </PageHeader>
+
+  <p class="au-u-margin-bottom" data-test-status-description>
+    {{this.statusDescription}}
+  </p>
+
+  <div class="au-o-flow au-o-flow--small au-u-margin-bottom">
+    {{#if this.openQuestion}}
+      {{#if this.canAnswer}}
+        <AuAlert
+          @skin="warning"
+          @icon="question-circle"
+          @title="De reviewer verwacht aanvullende informatie"
+          data-test-banner="question"
+        >
+          <p>{{this.openQuestion.reason}}</p>
+          <AuButton
+            class="au-u-margin-top-small"
+            {{on "click" (fn this.open "informatieantwoord")}}
+          >
+            Beantwoord de aanvullende vraag
+          </AuButton>
+        </AuAlert>
+      {{else}}
+        <AuAlert
+          @skin="info"
+          @icon="question-circle"
+          @title="Aanvullende informatie gevraagd"
+          data-test-banner="question"
+        >
+          {{#if this.openQuestion.reason}}
+            <p>{{this.openQuestion.reason}}</p>
+          {{/if}}
+          <p>De aanvrager heeft nog niet geantwoord.</p>
+        </AuAlert>
+      {{/if}}
+    {{/if}}
+
+    {{#if this.freshAnswer}}
+      <AuAlert
+        @skin="success"
+        @icon="comment"
+        @title="De aanvrager heeft de aanvullende informatie bezorgd"
+        data-test-banner="answer"
+      >
+        {{#if this.freshAnswer.reason}}
+          <p>{{this.freshAnswer.reason}}</p>
+        {{/if}}
+      </AuAlert>
+    {{/if}}
+
+    {{#if this.freshContest}}
+      <AuAlert
+        @skin="warning"
+        @icon="comment"
+        @title="De aanvrager betwist de afkeuring"
+        data-test-banner="contest"
+      >
+        {{#if this.freshContest.reason}}
+          <p>{{this.freshContest.reason}}</p>
+        {{/if}}
+      </AuAlert>
+    {{/if}}
+
+    {{#if this.rejection}}
+      <AuAlert
+        @skin="error"
+        @icon="cross"
+        @title="Deze aanvraag is afgekeurd"
+        data-test-banner="rejection"
+      >
+        {{#if this.rejection.reason}}
+          <p>{{this.rejection.reason}}</p>
+        {{/if}}
+        {{#if this.canContest}}
+          <p>
+            Ga je niet akkoord met deze beslissing? Laat het ons weten en leg
+            uit waarom.
+          </p>
+          <AuButton
+            @skin="secondary"
+            class="au-u-margin-top-small"
+            {{on "click" (fn this.open "betwisting")}}
+          >
+            Beslissing betwisten
+          </AuButton>
+        {{/if}}
+      </AuAlert>
+    {{/if}}
+
+    {{#if this.attributes.error}}
+      <AuAlert
+        @skin="error"
+        @icon="alert-triangle"
+        @title="Het doorvoeren van de aanvraag mislukte"
+        data-test-banner="failed"
+      >
+        <p>{{this.attributes.error}}</p>
+        {{#if this.canReapply}}
+          <p>Pas de aanvraag opnieuw toe zodra de oorzaak verholpen is.</p>
+        {{/if}}
+      </AuAlert>
+    {{/if}}
+
+    {{#if (and this.decides this.isPending this.conflicts.length)}}
+      <AuAlert
+        @skin="warning"
+        @icon="alert-triangle"
+        @title="Intussen gewijzigde gegevens"
+        data-test-banner="conflicts"
+      >
+        <p>
+          Sinds de aanvraag werd ingediend zijn gegevens die ze wijzigt door
+          iemand anders aangepast. Je ziet de verschillen bij het goedkeuren.
+        </p>
+      </AuAlert>
+    {{/if}}
+  </div>
+
+  <AuTabs class="au-u-margin-bottom" as |Tab|>
+    <Tab>
+      <AuNavigationLink @route="aanvragen.aanvraag.index">
+        Aanvraagformulier
+      </AuNavigationLink>
+    </Tab>
+    <Tab>
+      <AuNavigationLink @route="aanvragen.aanvraag.extra-informatie">
+        Extra informatie
+      </AuNavigationLink>
+    </Tab>
+    <Tab>
+      <AuNavigationLink @route="aanvragen.aanvraag.geschiedenis">
+        Aanvraaggeschiedenis
+      </AuNavigationLink>
+    </Tab>
+  </AuTabs>
+
+  {{outlet}}
+</div>
+
+{{#if this.openStep}}
+  <ChangeRequests::StepModal
+    @step={{this.openStep}}
+    @request={{this.request}}
+    @onClose={{this.close}}
+    @onDone={{this.stepTaken}}
+  />
+{{/if}}

@@ -1,0 +1,191 @@
+import Controller from '@ember/controller';
+import { action } from '@ember/object';
+import { service } from '@ember/service';
+import { tracked } from '@glimmer/tracking';
+import {
+  PENDING_STATUSES,
+  STATUS,
+  STATUS_DESCRIPTIONS,
+  STEP,
+} from 'frontend-organization-portal/constants/change-requests';
+
+/**
+ * One change request: what the session may do with it and the modal that
+ * takes the step. Which actions show follows the status of the request and
+ * who looks at it: ABB decides (goedkeuring, afkeuring, informatievraag),
+ * the requesting organisation answers a question, contests a rejection and
+ * withdraws its request. The service checks the same rules on every step.
+ */
+export default class AanvragenAanvraagController extends Controller {
+  @service currentSession;
+  @service router;
+  @service toaster;
+
+  /**
+   * The step type whose modal is open, or null.
+   */
+  @tracked openStep = null;
+
+  get request() {
+    return this.model.request;
+  }
+
+  get attributes() {
+    return this.request.attributes;
+  }
+
+  get status() {
+    return this.attributes.status;
+  }
+
+  get statusDescription() {
+    return STATUS_DESCRIPTIONS[this.status] ?? '';
+  }
+
+  get isPending() {
+    return PENDING_STATUSES.includes(this.status);
+  }
+
+  get steps() {
+    return this.attributes.steps ?? [];
+  }
+
+  get lastStep() {
+    return this.steps.at(-1) ?? null;
+  }
+
+  /**
+   * Whether the session acts for the organisation that submitted the
+   * request.
+   */
+  get isRequester() {
+    return (
+      Boolean(this.model.requesterId) &&
+      this.model.requesterId === this.currentSession.organizationId
+    );
+  }
+
+  get decides() {
+    return this.model.rights?.canDecide === true;
+  }
+
+  get canApprove() {
+    return this.decides && this.status === STATUS.SUBMITTED;
+  }
+
+  get canReject() {
+    return (
+      this.decides &&
+      [STATUS.SUBMITTED, STATUS.INFORMATION_REQUESTED, STATUS.FAILED].includes(
+        this.status,
+      )
+    );
+  }
+
+  get canAskInformation() {
+    return this.decides && this.status === STATUS.SUBMITTED;
+  }
+
+  get canReapply() {
+    return this.decides && this.status === STATUS.FAILED;
+  }
+
+  get canAnswer() {
+    return this.isRequester && this.status === STATUS.INFORMATION_REQUESTED;
+  }
+
+  get canContest() {
+    return this.isRequester && this.status === STATUS.REJECTED;
+  }
+
+  get canWithdraw() {
+    return (
+      (this.isRequester || this.decides) &&
+      [STATUS.SUBMITTED, STATUS.INFORMATION_REQUESTED, STATUS.FAILED].includes(
+        this.status,
+      )
+    );
+  }
+
+  get hasActions() {
+    return (
+      this.canApprove ||
+      this.canReject ||
+      this.canAskInformation ||
+      this.canReapply ||
+      this.canAnswer ||
+      this.canContest ||
+      this.canWithdraw
+    );
+  }
+
+  /**
+   * The open question of ABB, while the requester has not answered.
+   */
+  get openQuestion() {
+    return this.status === STATUS.INFORMATION_REQUESTED
+      ? this.lastStepOfType(STEP.INFORMATION_REQUEST)
+      : null;
+  }
+
+  /**
+   * The requester's answer that brought the request back into validation.
+   */
+  get freshAnswer() {
+    return this.status === STATUS.SUBMITTED &&
+      this.lastStep?.type === STEP.INFORMATION_ANSWER
+      ? this.lastStep
+      : null;
+  }
+
+  /**
+   * The requester's contest that brought the request back into validation.
+   */
+  get freshContest() {
+    return this.status === STATUS.SUBMITTED &&
+      this.lastStep?.type === STEP.CONTEST
+      ? this.lastStep
+      : null;
+  }
+
+  /**
+   * The rejection, while the request is rejected.
+   */
+  get rejection() {
+    return this.status === STATUS.REJECTED
+      ? this.lastStepOfType(STEP.REJECTION)
+      : null;
+  }
+
+  get conflicts() {
+    return this.attributes.conflicts ?? [];
+  }
+
+  lastStepOfType(type) {
+    return [...this.steps].reverse().find((step) => step.type === type) ?? null;
+  }
+
+  @action
+  open(step) {
+    this.openStep = step;
+  }
+
+  @action
+  close() {
+    this.openStep = null;
+  }
+
+  /**
+   * The step is taken: show the updated request.
+   */
+  @action
+  async stepTaken(document, message) {
+    this.openStep = null;
+    this.toaster.success(message, 'Aanvraag');
+    await this.router.refresh('aanvragen.aanvraag');
+  }
+
+  reset() {
+    this.openStep = null;
+  }
+}

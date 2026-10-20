@@ -1,0 +1,11 @@
+<span ...attributes>
+  {{#if this.load.isRunning}}
+    <span class="au-u-muted">Aan het laden...</span>
+  {{else if this.route}}
+    <AuLink @route={{this.route}} @model={{this.args.reference.id}}>
+      {{this.label}}
+    </AuLink>
+  {{else}}
+    {{this.label}}
+  {{/if}}
+</span>

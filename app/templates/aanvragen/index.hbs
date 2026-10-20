@@ -1,0 +1,193 @@
+<SidebarContainer>
+  <:sidebar>
+    <div class="au-c-sidebar">
+      <div class="au-c-sidebar__content au-o-box">
+        <form
+          {{on "reset" this.resetFilters}}
+          class="au-o-grid au-o-grid--small"
+        >
+          <div class="au-o-grid__item au-u-1-1">
+            <AuLabel for="filter-requester">Aanvrager</AuLabel>
+            <OrganizationSelect
+              @id="filter-requester"
+              @selected={{if this.requester this.requester}}
+              @onChange={{this.setRequester}}
+              @allowClear={{true}}
+            />
+          </div>
+          <div class="au-o-grid__item au-u-1-1">
+            <AuCheckbox
+              @checked={{this.mine}}
+              @onChange={{this.toggleMine}}
+              data-test-filter-mine
+            >
+              Enkel mijn aanvragen tonen
+            </AuCheckbox>
+          </div>
+          <div class="au-o-grid__item au-u-1-1">
+            <AuLabel for="filter-kind">Type aanvraag</AuLabel>
+            <PowerSelect
+              @triggerId="filter-kind"
+              @options={{this.kindOptions}}
+              @selected={{this.selectedKind}}
+              @onChange={{this.setKind}}
+              @allowClear={{true}}
+              @searchEnabled={{false}}
+              @placeholder="Alle types"
+              as |option|
+            >
+              {{option.label}}
+            </PowerSelect>
+          </div>
+          <div class="au-o-grid__item au-u-1-1">
+            <AuLabel for="filter-classification">
+              Type betrokken organisatie
+            </AuLabel>
+            <ClassificationSelect
+              @id="filter-classification"
+              @selected={{if
+                this.targetClassification
+                this.targetClassification
+              }}
+              @onChange={{this.setTargetClassification}}
+              @allowClear={{true}}
+            />
+          </div>
+          <div class="au-o-grid__item au-u-1-1">
+            <AuLabel for="filter-target">Naam betrokken organisatie</AuLabel>
+            <OrganizationSelect
+              @id="filter-target"
+              @selected={{if this.organization this.organization}}
+              @onChange={{this.setOrganization}}
+              @allowClear={{true}}
+            />
+          </div>
+          <div class="au-o-grid__item au-u-1-2@small au-u-1-1@medium">
+            <AuLabel for="filter-created-from">Datum aanvraag vanaf</AuLabel>
+            <Datepicker
+              @id="filter-created-from"
+              @value={{this.createdFrom}}
+              @onChange={{this.setCreatedFrom}}
+            />
+          </div>
+          <div class="au-o-grid__item au-u-1-2@small au-u-1-1@medium">
+            <AuLabel for="filter-created-until">
+              Datum aanvraag tot en met
+            </AuLabel>
+            <Datepicker
+              @id="filter-created-until"
+              @value={{this.createdUntil}}
+              @onChange={{this.setCreatedUntil}}
+            />
+          </div>
+          <div class="au-o-grid__item au-u-1-1">
+            <AuLabel for="filter-status">Status aanvraag</AuLabel>
+            <PowerSelect
+              @triggerId="filter-status"
+              @options={{this.statusOptions}}
+              @selected={{this.selectedStatus}}
+              @onChange={{this.setStatus}}
+              @allowClear={{true}}
+              @searchEnabled={{false}}
+              @placeholder="Alle statussen"
+              as |option|
+            >
+              {{option.label}}
+            </PowerSelect>
+          </div>
+          <div class="au-o-grid__item">
+            <AuButton @skin="link" type="reset">
+              <AuIcon @icon="cross" @alignment="left" />
+              Herstel alle filters
+            </AuButton>
+          </div>
+        </form>
+      </div>
+    </div>
+  </:sidebar>
+  <:content>
+    <AuDataTable
+      @content={{this.requests}}
+      @isLoading={{this.showTableLoader}}
+      @page={{this.page}}
+      @size={{this.size}}
+      as |t|
+    >
+      <t.menu as |menu|>
+        <menu.general>
+          <PageHeader class="au-o-box">
+            <:title>Alle aanvragen</:title>
+          </PageHeader>
+        </menu.general>
+      </t.menu>
+      <t.content class="au-c-data-table__table--small" as |c|>
+        <c.header>
+          <th>Type aanvraag</th>
+          <th>Aanvrager</th>
+          <th>Betrokken organisatie</th>
+          <th>Naam betrokken organisatie</th>
+          <AuDataTableThSortable
+            @field="created"
+            @currentSorting={{this.sort}}
+            @label="Datum aanvraag"
+          />
+          <th>Status aanvraag</th>
+        </c.header>
+        {{#if this.hasErrored}}
+          <TableMessage::Error />
+        {{else if this.hasNoResults}}
+          <TableMessage>
+            <p>
+              Er werden geen aanvragen gevonden.
+              {{#if this.hasFilters}}
+                Pas de filters aan of herstel ze.
+              {{/if}}
+            </p>
+          </TableMessage>
+        {{else}}
+          <c.body as |row|>
+            <td>
+              <AuLink @route="aanvragen.aanvraag" @model={{row.id}}>
+                {{change-request-kind-label row.kind}}
+              </AuLink>
+            </td>
+            <td>
+              {{#if row.requester}}
+                {{row.requester.abbName}}
+              {{else}}
+                <span class="au-u-muted">Onbekend</span>
+              {{/if}}
+              {{#if row.mine}}
+                <AuPill @skin="link" data-test-mine>Mijn aanvraag</AuPill>
+              {{/if}}
+            </td>
+            <td>
+              {{#if row.classification}}
+                {{row.classification.label}}
+              {{/if}}
+            </td>
+            <td>
+              {{#if row.targetPending}}
+                {{row.targetName}}
+                <span class="au-u-muted">(in aanvraag)</span>
+              {{else if row.targetId}}
+                <AuLink
+                  @route="organizations.organization"
+                  @model={{row.targetId}}
+                >
+                  {{row.targetName}}
+                </AuLink>
+              {{else}}
+                {{row.targetName}}
+              {{/if}}
+            </td>
+            <td>{{date-format row.created}}</td>
+            <td>
+              <ChangeRequests::Status @status={{row.status}} />
+            </td>
+          </c.body>
+        {{/if}}
+      </t.content>
+    </AuDataTable>
+  </:content>
+</SidebarContainer>

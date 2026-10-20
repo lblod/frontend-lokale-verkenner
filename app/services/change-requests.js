@@ -88,6 +88,7 @@ export class ChangeRequestError extends Error {
       reloadFailed = false,
       applyFailed = false,
       requestId = null,
+      conflictsToken = null,
       cause,
     } = {},
   ) {
@@ -102,6 +103,7 @@ export class ChangeRequestError extends Error {
     this.reloadFailed = reloadFailed;
     this.applyFailed = applyFailed;
     this.requestId = requestId;
+    this.conflictsToken = conflictsToken;
   }
 
   get outcomeUnknown() {
@@ -161,6 +163,10 @@ export class ChangeRequestError extends Error {
       errors,
       applyFailed,
       requestId: applyFailed ? request.id : null,
+      // A goedkeuring refused over changed data carries the conflicts and
+      // the token that overrides exactly them
+      conflicts: conflictsOf(errors) ?? [],
+      conflictsToken: conflictsTokenOf(errors),
     });
   }
 }
@@ -182,6 +188,14 @@ export default class ChangeRequestsService extends Service {
    * recomputes.
    */
   @tracked permissionsByTarget = new Map();
+
+  /**
+   * What the session may do with requests in general, as `loadRights`
+   * fetched it: `{ canDecide, canCreate }`, `canDecide` whether it approves,
+   * rejects and asks for information (ABB), `canCreate` the classifications
+   * (URIs) of the organisations it may request. Null until loaded.
+   */
+  @tracked rights = null;
 
   /**
    * The uuid of the organisation whose pages are open, set by the
@@ -290,6 +304,178 @@ export default class ChangeRequestsService extends Service {
     }
 
     return permissions;
+  }
+
+  /**
+   * Ask the service what the session may do with requests in general
+   * (`GET /change-requests/permissions` without target) and keep the answer
+   * as `rights`. When the check fails the session decides nothing and may
+   * request nothing, as for `permissions`.
+   *
+   * @returns {Promise<{ canDecide: boolean, canCreate: string[] }>}
+   */
+  async loadRights() {
+    const nothing = { canDecide: false, canCreate: [] };
+    let body;
+    try {
+      const response = await fetch(`${ENDPOINT}/permissions`, {
+        headers: { Accept: JSON_API_CONTENT_TYPE },
+      });
+      if (!response.ok) {
+        console.warn(
+          `Could not determine the rights on change requests (HTTP ${response.status}).`,
+        );
+        this.rights = nothing;
+        return nothing;
+      }
+      body = await response.json();
+    } catch (error) {
+      console.warn('Could not determine the rights on change requests.', error);
+      this.rights = nothing;
+      return nothing;
+    }
+    this.rights = {
+      canDecide: body?.['can-decide'] === true,
+      canCreate: Array.isArray(body?.['can-create']) ? body['can-create'] : [],
+    };
+    return this.rights;
+  }
+
+  /**
+   * One page of the change requests the session may see
+   * (`GET /change-requests`): the JSON:API documents as the service answers
+   * them, the total over all pages and the pagination links. Oldest first
+   * unless `sort` says otherwise.
+   *
+   * @param {Object} [filters]
+   * @param {string} [filters.kind] - `edit`, `creation` or `change-event`
+   *     (comma-separated for several)
+   * @param {boolean} [filters.mine] - only the requests the session's person
+   *     submitted
+   * @param {string} [filters.requester] - uuid of the requesting organisation
+   * @param {string} [filters.target] - uuid of the organisation the request
+   *     is about
+   * @param {string} [filters.targetClassification] - uuid of a
+   *     classification code
+   * @param {string} [filters.status] - status keys, comma-separated
+   * @param {string} [filters.createdFrom] - ISO date-time, inclusive
+   * @param {string} [filters.createdUntil] - ISO date-time, inclusive
+   * @param {string} [filters.sort] - `created` (the default) or `-created`
+   * @param {number} [filters.page] - from 0
+   * @param {number} [filters.size] - at most 100
+   * @returns {Promise<{ requests: Object[], count: number, links: Object }>}
+   */
+  async list({
+    kind,
+    mine = false,
+    requester,
+    target,
+    targetClassification,
+    status,
+    createdFrom,
+    createdUntil,
+    sort,
+    page = 0,
+    size = 20,
+  } = {}) {
+    const query = new URLSearchParams();
+    if (kind) query.set('filter[kind]', kind);
+    if (mine) query.set('filter[mine]', 'true');
+    if (requester) query.set('filter[requester]', requester);
+    if (target) query.set('filter[target]', target);
+    if (targetClassification) {
+      query.set('filter[target-classification]', targetClassification);
+    }
+    if (status) query.set('filter[status]', status);
+    if (createdFrom) query.set('filter[created][gte]', createdFrom);
+    if (createdUntil) query.set('filter[created][lte]', createdUntil);
+    if (sort) query.set('sort', sort);
+    query.set('page[number]', String(page));
+    query.set('page[size]', String(size));
+
+    const response = await get(
+      `${ENDPOINT}?${query}`,
+      'De aanvragen konden niet opgehaald worden. Controleer de verbinding en probeer opnieuw.',
+    );
+    if (!response.ok) {
+      throw await ChangeRequestError.fromResponse(response, listMessage);
+    }
+    const body = await response.json();
+    return {
+      requests: Array.isArray(body?.data) ? body.data : [],
+      count: body?.meta?.count ?? 0,
+      links: body?.links ?? {},
+    };
+  }
+
+  /**
+   * One change request (`GET /change-requests/:id`): its JSON:API document,
+   * with its steps, live conflicts and the operations it was submitted with.
+   * Rejects with a `ChangeRequestError` when it does not exist or is not
+   * visible to the session (404), or the service does not answer.
+   *
+   * @param {string} requestId - uuid of the change request
+   * @returns {Promise<Object>} the resource object (`id`, `attributes`,
+   *     `relationships`)
+   */
+  async find(requestId) {
+    const response = await get(
+      `${ENDPOINT}/${encodeURIComponent(requestId)}`,
+      'De aanvraag kon niet opgehaald worden. Controleer de verbinding en probeer opnieuw.',
+    );
+    if (!response.ok) {
+      throw await ChangeRequestError.fromResponse(response, findMessage);
+    }
+    const body = await response.json();
+    if (!body?.data?.id) {
+      throw new ChangeRequestError(
+        'Het antwoord van de dienst bevat geen aanvraag.',
+        { status: response.status },
+      );
+    }
+    return body.data;
+  }
+
+  /**
+   * Take a step on a request (`POST /change-requests/:id/steps`): a
+   * goedkeuring, afkeuring or informatievraag by ABB, an informatieantwoord
+   * or betwisting by the requesting organisation, an intrekking, or a
+   * hertoepassing of a failed request. Resolves with the updated request
+   * document. Rejects with a `ChangeRequestError` whose message says why the
+   * service refused: the status no longer admits the step (409), a
+   * goedkeuring over data that changed meanwhile (409 with `conflicts` and
+   * the `conflictsToken` that overrides exactly them), the session may not
+   * take it (403), a missing text (422), or the step did not reach the
+   * service.
+   *
+   * @param {string} requestId - uuid of the change request
+   * @param {string} stepType - `goedkeuring`, `afkeuring`, `informatievraag`,
+   *     `informatieantwoord`, `betwisting`, `intrekking` or `hertoepassing`
+   * @param {Object} [options]
+   * @param {string|null} [options.reason] - the text of the step: the
+   *     question, the answer, the reason of a rejection or a contest
+   * @param {string|null} [options.override] - the conflicts token of the
+   *     conflicts reviewed, for a goedkeuring that overrides them
+   * @returns {Promise<Object>} the updated resource object
+   */
+  async takeDecision(
+    requestId,
+    stepType,
+    { reason = null, override = null } = {},
+  ) {
+    const attributes = { 'step-type': stepType };
+    if (reason) attributes.reason = reason;
+    if (override) attributes.override = override;
+    const response = await post(
+      `${ENDPOINT}/${encodeURIComponent(requestId)}/steps`,
+      { data: { type: 'change-request-steps', attributes } },
+      'De stap kon niet verstuurd worden. Controleer de verbinding en probeer opnieuw.',
+    );
+    if (!response.ok) {
+      throw await ChangeRequestError.fromResponse(response, stepMessage);
+    }
+    const body = await response.json();
+    return body?.data ?? null;
   }
 
   /**
@@ -872,6 +1058,79 @@ function conflictsOf(errors) {
 }
 
 /**
+ * The conflicts token of a 409 for a goedkeuring over changed data
+ * (`meta['conflicts-token']` of the error), or null.
+ */
+function conflictsTokenOf(errors) {
+  return (
+    errors.find((error) => typeof error?.meta?.['conflicts-token'] === 'string')
+      ?.meta['conflicts-token'] ?? null
+  );
+}
+
+/**
+ * The message for a listing the service refused.
+ */
+function listMessage(status) {
+  if (status === 400) {
+    return 'De filters zijn ongeldig. Herstel de filters en probeer opnieuw.';
+  }
+  if (status === 401) {
+    return 'Je bent niet aangemeld.';
+  }
+  return undefined;
+}
+
+/**
+ * The message for a request that could not be fetched.
+ */
+function findMessage(status) {
+  if (status === 404) {
+    return 'De aanvraag werd niet gevonden.';
+  }
+  if (status === 401) {
+    return 'Je bent niet aangemeld.';
+  }
+  return undefined;
+}
+
+/**
+ * The message for a step the service refused.
+ */
+function stepMessage(status, errors) {
+  if (status === 409) {
+    if (conflictsOf(errors)) {
+      return 'De gegevens zijn intussen gewijzigd; bekijk de verschillen voor je de aanvraag goedkeurt.';
+    }
+    const requestStatus = requestStatusOf(errors);
+    if (requestStatus) {
+      return `Deze stap is niet meer mogelijk: de aanvraag is intussen ${STATUS_WORDS[requestStatus] ?? requestStatus}.`;
+    }
+    return 'Deze stap is niet meer mogelijk. Herlaad de pagina.';
+  }
+  if (status === 403) {
+    return 'Je mag deze stap niet zetten.';
+  }
+  if (status === 404) {
+    return 'De aanvraag werd niet gevonden.';
+  }
+  return undefined;
+}
+
+/**
+ * The statuses as the step messages name them.
+ */
+const STATUS_WORDS = {
+  ingediend: 'opnieuw ingediend',
+  'informatie-gevraagd': 'in afwachting van informatie',
+  goedgekeurd: 'goedgekeurd',
+  afgehandeld: 'goedgekeurd en doorgevoerd',
+  afgekeurd: 'afgekeurd',
+  ingetrokken: 'ingetrokken',
+  mislukt: 'goedgekeurd, maar het doorvoeren mislukte',
+};
+
+/**
  * The request a JSON:API error is about (`meta['change-request']`, `{ id,
  * status }`), e.g. the request whose apply failed.
  */
@@ -965,6 +1224,22 @@ function resourceIdentifier(serializer, snapshot, lids) {
   }
 
   return { type, lid };
+}
+
+/**
+ * GET a document of the service.
+ *
+ * @param {string} url
+ * @param {string} unsentMessage - the message when the request does not
+ *     reach the service
+ * @returns {Promise<Response>}
+ */
+async function get(url, unsentMessage) {
+  try {
+    return await fetch(url, { headers: { Accept: JSON_API_CONTENT_TYPE } });
+  } catch (error) {
+    throw new ChangeRequestError(unsentMessage, { cause: error });
+  }
 }
 
 async function post(

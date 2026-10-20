@@ -1,0 +1,38 @@
+<AuTable @size="small" data-test-history>
+  <:header>
+    <tr>
+      <th>Datum</th>
+      <th>Actie</th>
+      <th>Door</th>
+      <th>Details</th>
+      <th>Resulterende status</th>
+    </tr>
+  </:header>
+  <:body>
+    {{#each this.history as |entry|}}
+      <tr>
+        <td>{{date-time-format entry.step.at}}</td>
+        <td>{{change-request-step-label entry.step.type}}</td>
+        <td>{{entry.actor}}</td>
+        <td>
+          {{#if entry.step.reason}}
+            {{entry.step.reason}}
+          {{else if entry.step.error}}
+            <span class="au-u-muted">{{entry.step.error}}</span>
+          {{else if entry.hiddenText}}
+            <span class="au-u-muted">
+              Enkel zichtbaar voor de aanvrager en ABB
+            </span>
+          {{/if}}
+        </td>
+        <td>
+          <ChangeRequests::Status @status={{entry.step.status}} />
+        </td>
+      </tr>
+    {{else}}
+      <tr>
+        <td colspan="5" class="au-u-muted">Geen stappen</td>
+      </tr>
+    {{/each}}
+  </:body>
+</AuTable>

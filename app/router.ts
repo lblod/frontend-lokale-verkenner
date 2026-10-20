@@ -107,6 +107,13 @@ Router.map(function () {
     this.route('new', { path: '/nieuwe-organisatie' });
   });
 
+  this.route('aanvragen', function () {
+    this.route('aanvraag', { path: '/:id' }, function () {
+      this.route('extra-informatie');
+      this.route('geschiedenis');
+    });
+  });
+
   this.route('contact');
 
   this.route('legal', { path: '/legaal' }, function () {

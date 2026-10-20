@@ -123,10 +123,13 @@ Or in template files by using the `is-feature-enabled` helper:
 Every edit this application makes to an organisation is a change request,
 sent to the change-request service of the backend (`/change-requests`), which
 checks who may edit what, keeps the request with the proposed state as its
-history and applies it to the organisation data. A request is applied
-immediately, unless someone else changed the same data since the page loaded
-it: the service then keeps the request without applying it, for a decision by
-ABB (see [Held requests](#held-requests)). The resource routes are read-only
+history and applies it to the organisation data. An edit of an organisation's
+own data is applied immediately, unless someone else changed the same data
+since the page loaded it: the service then refuses it and the page shows the
+current values (see [Held requests](#held-requests)). A request to register a
+new organisation or a veranderingsgebeurtenis waits for a decision by ABB; the
+pages under `/aanvragen` show those requests and take the steps (see
+[The request pages](#the-request-pages)). The resource routes are read-only
 for this application: the backend refuses a write on them, and the pages that
 still contain such a write (see the table) are closed.
 
@@ -150,6 +153,45 @@ build the form again and show `Error::ChangeRequestHeld` with the page's
 labels for the fields, see [Held requests](#held-requests)) and a failed
 apply (block saving and offer `reapply`, see
 [Failed applies](#failed-applies)).
+
+### The request pages
+
+`/aanvragen` ("Alle aanvragen") lists every change request the session may
+see, oldest first, with the filters of the designs as query parameters: the
+requesting organisation (`requester`), only mine (`mine`), the kind
+(`kind`: `edit`, `creation` or `change-event`), the classification of the
+organisation the request is about (`targetClassification`), that organisation
+(`organization`; not `target`, which every Ember controller already owns),
+the period (`createdFrom`, `createdUntil`, as `YYYY-MM-DD`), the status
+(`status`) and the sort (`created` or `-created`). The route asks the service
+one page (`changeRequests.list`) and resolves the organisations and
+classifications it names through the store. Each row links to the request;
+the organisation a request is about links to its page when it exists, a new
+organisation that still waits for approval is shown "(in aanvraag)".
+
+`/aanvragen/:id` shows one request: its status with a description, who
+requested it and when, and three tabs. "Aanvraagformulier" renders the
+operations the request was submitted with (`ChangeRequests::Operations`: one
+card per record, the records it creates named from their own operation, the
+others loaded from the store); "Extra informatie" the exchange between ABB
+and the requester (questions, answers, rejections, contests);
+"Aanvraaggeschiedenis" every step with who took it and the resulting status.
+What the viewer may do comes from the status and the rights the `aanvragen`
+route loaded (`changeRequests.loadRights`): ABB approves, rejects, asks for
+information, applies a failed request again and withdraws; the requesting
+organisation answers a question, contests a rejection and withdraws. Every
+action is a `ChangeRequests::StepModal`, which posts the step
+(`changeRequests.takeDecision`) and refreshes the page. An approval over data
+that changed since the request was submitted shows the conflicts and needs a
+confirmation; the modal then sends the service's `conflicts-token`, so it
+overrides exactly the conflicts the reviewer saw. The service shows the
+person who submitted a request and the texts of the steps to the requesting
+organisation and ABB only; the pages never name a person, only the
+organisation. The labels of statuses, kinds, steps and fields live in
+`app/constants/change-requests.js`.
+
+The forms that submit a creation or a change-event request are not built
+yet: those requests are made through the service's API for now.
 
 ### The `change-requests` service
 
@@ -336,11 +378,15 @@ that each make their new vestiging the primary site conflict on
 
 ### Held requests
 
-When the service finds a conflict it records the request with status
-`ingediend` and answers `201` without applying anything; the request waits for
-a decision by ABB, who approves or rejects it later on the service
-(`POST /change-requests/:id/steps`; this application has no screen for that
-yet). For the frontend this is neither a success nor a refusal:
+An edit of an organisation's own data is applied at once or not at all: when
+the service finds a conflict (someone else changed the same field since the
+page loaded it) it refuses the save with `409` and the conflicts, and nothing
+is recorded. A request to register a new organisation or a
+veranderingsgebeurtenis is recorded with status `ingediend` and answered with
+`201` without applying anything; it waits for a decision by ABB on the
+request pages. For the frontend both are neither a success nor a refusal:
+`ChangeRequestError.held` is set for both, `waiting` only for a request that
+waits for ABB (with its `requestId`, so it can be withdrawn):
 
 - `submit` discards the local changes, unloads the new records (they exist in
   the request only) and reloads the other records with the relationships the
@@ -364,16 +410,17 @@ yet). For the frontend this is neither a success nor a refusal:
   records.
 - The page then shows `Error::ChangeRequestHeld`: a warning that the change
   was not applied because someone else changed the same data in the
-  meantime, naming the fields, that the request waits for a decision by ABB,
-  and that saving the same fields again replaces it: the service then
-  withdraws the held request itself (saving only part of them leaves it
-  waiting next to the new change); a button withdraws the held request
-  (`withdraw`). When a save replaced earlier requests, the service lists them
-  in `superseded` and `submit` shows a toast saying they were withdrawn. The
-  names are the page's labels for the key of the
-  record in conflict, from `app/utils/change-request-conflicts.js` (the key
-  itself when there is no label). Refreshing resets the controller, so the
-  notice is set afterwards.
+  meantime, naming the fields. For a refused edit that is all: the form shows
+  the current values and the user enters the change again. For a request
+  that waits for ABB it adds that the request waits, that saving the same
+  fields again replaces it (the service then withdraws the waiting request
+  itself; saving only part of them leaves it waiting next to the new change)
+  and a button that withdraws it (`withdraw`). When a save replaced earlier
+  requests, the service lists them in `superseded` and `submit` shows a toast
+  saying they were withdrawn. The names are the page's labels for the key of
+  the record in conflict, from `app/utils/change-request-conflicts.js` (the
+  key itself when there is no label). Refreshing resets the controller, so
+  the notice is set afterwards.
 - A new save is a new request, whose base is what the form now shows, and
   the service checks it against the current values again. On the page of a
   new vestiging a held request means that the site was not created; the
@@ -382,7 +429,7 @@ yet). For the frontend this is neither a success nor a refusal:
   logged), the store holds the values the page loaded, not the current ones:
   the notice asks for a reload and saving is blocked. When the refresh itself
   fails, the router shows the error page; a warning toast then says that the
-  request waits for ABB.
+  change was not applied (and, for a request, that it waits for ABB).
 
 ### Failed applies
 
@@ -391,8 +438,8 @@ transaction: when it fails twice it keeps the request with status
 `mislukt`, and the apply may have stopped half-way, leaving the keys it
 changes empty on the organisation. It answers `409` with
 `meta["change-request"]` (`{ id, status: "mislukt" }`). A new save would
-start from the values the page loaded, find the emptied keys and be held as
-a conflict, so the page keeps its edits, blocks the save button and shows an
+start from the values the page loaded, find the emptied keys and be refused
+as a conflict, so the page keeps its edits, blocks the save button and shows an
 "Opnieuw toepassen" button that applies the kept request again (`reapply`, a
 `hertoepassing` step). Once it is applied the page is left as after a save.
 When it fails again, with a `5xx` or without reaching the service, it can be

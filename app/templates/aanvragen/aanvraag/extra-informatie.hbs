@@ -1,0 +1,30 @@
+{{#if this.conversation.length}}
+  <ul class="au-o-flow au-o-flow--small" data-test-conversation>
+    {{#each this.conversation as |entry|}}
+      <li>
+        <AuPanel class="au-u-padding">
+          <p class="au-u-margin-bottom-tiny">
+            <strong>{{entry.actor}}</strong>
+            <span class="au-u-muted">
+              &ndash;
+              {{change-request-step-label entry.step.type}}
+              op
+              {{date-time-format entry.step.at}}
+            </span>
+          </p>
+          {{#if entry.step.reason}}
+            <p>{{entry.step.reason}}</p>
+          {{else}}
+            <p class="au-u-muted">
+              De tekst is enkel zichtbaar voor de aanvrager en ABB.
+            </p>
+          {{/if}}
+        </AuPanel>
+      </li>
+    {{/each}}
+  </ul>
+{{else}}
+  <p class="au-u-muted" data-test-conversation-empty>
+    Er werd geen aanvullende informatie gevraagd voor deze aanvraag.
+  </p>
+{{/if}}

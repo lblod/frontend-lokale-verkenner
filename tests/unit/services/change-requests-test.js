@@ -37,6 +37,18 @@ function deferred() {
   return { promise, resolve };
 }
 
+/**
+ * The error a promise rejects with, or null when it resolves.
+ */
+async function rejection(promise) {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  return null;
+}
+
 module('Unit | Service | change-requests', function (hooks) {
   setupTest(hooks);
 
@@ -1234,15 +1246,6 @@ module('Unit | Service | change-requests', function (hooks) {
       });
     }
 
-    async function rejection(promise) {
-      try {
-        await promise;
-      } catch (error) {
-        return error;
-      }
-      return null;
-    }
-
     test('withdraw takes an intrekking step on the request', async function (assert) {
       this.fetch.resolves(
         jsonResponse(201, {
@@ -1362,6 +1365,263 @@ module('Unit | Service | change-requests', function (hooks) {
         error.message,
         'Intussen werd een andere wijziging van deze organisatie doorgevoerd, daarom wordt je aanvraag niet meer toegepast. Herlaad de pagina en voer je wijziging opnieuw in.',
       );
+    });
+  });
+
+  module('listing and deciding', function () {
+    const DOCUMENT = {
+      type: 'change-requests',
+      id: REQUEST_ID,
+      attributes: { status: 'ingediend', kind: 'creation', steps: [] },
+      relationships: {
+        target: {
+          data: { type: 'organizations', id: 'org-new' },
+          meta: { pending: true },
+        },
+        'requesting-organisation': {
+          data: { type: 'organizations', id: 'org-1' },
+        },
+      },
+    };
+
+    function errorResponse(status, error) {
+      return jsonResponse(status, {
+        errors: [{ status: String(status), title: 'Refused', ...error }],
+      });
+    }
+
+    test('list asks one page with the filters as the service names them and returns the documents with the total', async function (assert) {
+      this.fetch.resolves(
+        jsonResponse(200, {
+          data: [DOCUMENT],
+          meta: { count: 7 },
+          links: { first: '/change-requests?page[number]=0' },
+        }),
+      );
+
+      const result = await this.service.list({
+        kind: 'creation',
+        mine: true,
+        requester: 'org-1',
+        target: 'org-new',
+        targetClassification: 'cls-1',
+        status: 'ingediend,informatie-gevraagd',
+        createdFrom: '2026-10-01T00:00:00.000Z',
+        createdUntil: '2026-10-31T23:59:59.999Z',
+        sort: '-created',
+        page: 2,
+        size: 10,
+      });
+
+      const [url, options] = this.fetch.lastCall.args;
+      const query = new URL(url, 'http://test').searchParams;
+      assert.deepEqual(Object.fromEntries(query), {
+        'filter[kind]': 'creation',
+        'filter[mine]': 'true',
+        'filter[requester]': 'org-1',
+        'filter[target]': 'org-new',
+        'filter[target-classification]': 'cls-1',
+        'filter[status]': 'ingediend,informatie-gevraagd',
+        'filter[created][gte]': '2026-10-01T00:00:00.000Z',
+        'filter[created][lte]': '2026-10-31T23:59:59.999Z',
+        sort: '-created',
+        'page[number]': '2',
+        'page[size]': '10',
+      });
+      assert.true(url.startsWith('/change-requests?'));
+      assert.strictEqual(options.headers.Accept, 'application/vnd.api+json');
+      assert.deepEqual(result, {
+        requests: [DOCUMENT],
+        count: 7,
+        links: { first: '/change-requests?page[number]=0' },
+      });
+    });
+
+    test('list without filters asks the first page of everything; a refused listing is an error with a message', async function (assert) {
+      this.fetch.resolves(jsonResponse(200, { data: [], meta: { count: 0 } }));
+
+      const result = await this.service.list();
+
+      const [url] = this.fetch.lastCall.args;
+      assert.deepEqual(
+        Object.fromEntries(new URL(url, 'http://test').searchParams),
+        { 'page[number]': '0', 'page[size]': '20' },
+      );
+      assert.deepEqual(result, { requests: [], count: 0, links: {} });
+
+      this.fetch.resolves(
+        errorResponse(400, { detail: 'filter[kind]: unknown value "foo"' }),
+      );
+      let error = await rejection(this.service.list({ kind: 'foo' }));
+      assert.true(error instanceof ChangeRequestError);
+      assert.strictEqual(error.status, 400);
+      assert.strictEqual(
+        error.message,
+        'De filters zijn ongeldig. Herstel de filters en probeer opnieuw.',
+      );
+
+      this.fetch.rejects(new TypeError('Failed to fetch'));
+      error = await rejection(this.service.list());
+      assert.true(
+        error.message.startsWith('De aanvragen konden niet opgehaald'),
+      );
+    });
+
+    test('find returns the document of a request and says when it is not found', async function (assert) {
+      this.fetch.resolves(jsonResponse(200, { data: DOCUMENT }));
+
+      const document = await this.service.find(REQUEST_ID);
+
+      assert.strictEqual(
+        this.fetch.lastCall.args[0],
+        `/change-requests/${REQUEST_ID}`,
+      );
+      assert.deepEqual(document, DOCUMENT);
+
+      this.fetch.resolves(errorResponse(404, { detail: 'No such request' }));
+      const error = await rejection(this.service.find(REQUEST_ID));
+      assert.strictEqual(error.status, 404);
+      assert.strictEqual(error.message, 'De aanvraag werd niet gevonden.');
+    });
+
+    test('takeDecision posts the step with its text and override and returns the updated request', async function (assert) {
+      const updated = {
+        ...DOCUMENT,
+        attributes: { ...DOCUMENT.attributes, status: 'afgekeurd' },
+      };
+      // A fresh Response per call: a body can be read once
+      this.fetch.callsFake(async () => jsonResponse(201, { data: updated }));
+
+      const document = await this.service.takeDecision(
+        REQUEST_ID,
+        'afkeuring',
+        {
+          reason: 'Het KBO-nummer klopt niet',
+        },
+      );
+
+      const [url, options] = this.fetch.lastCall.args;
+      assert.strictEqual(url, `/change-requests/${REQUEST_ID}/steps`);
+      assert.strictEqual(options.method, 'POST');
+      assert.deepEqual(JSON.parse(options.body), {
+        data: {
+          type: 'change-request-steps',
+          attributes: {
+            'step-type': 'afkeuring',
+            reason: 'Het KBO-nummer klopt niet',
+          },
+        },
+      });
+      assert.deepEqual(document, updated);
+
+      await this.service.takeDecision(REQUEST_ID, 'goedkeuring', {
+        override: '5ac5a8f6',
+      });
+      assert.deepEqual(
+        JSON.parse(this.fetch.lastCall.args[1].body).data.attributes,
+        {
+          'step-type': 'goedkeuring',
+          override: '5ac5a8f6',
+        },
+      );
+    });
+
+    test('takeDecision explains a refused step: no longer admitted, not allowed, or changed data with the conflicts to review', async function (assert) {
+      this.fetch.resolves(
+        errorResponse(409, {
+          detail: 'The status afgekeurd does not admit goedkeuring',
+          meta: { status: 'afgekeurd', 'step-type': 'goedkeuring' },
+        }),
+      );
+      let error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'goedkeuring'),
+      );
+      assert.true(error instanceof ChangeRequestError);
+      assert.strictEqual(
+        error.message,
+        'Deze stap is niet meer mogelijk: de aanvraag is intussen afgekeurd.',
+      );
+      assert.deepEqual(error.conflicts, []);
+
+      this.fetch.resolves(
+        errorResponse(403, { meta: { rule: null, rules: [] } }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'afkeuring', { reason: 'x' }),
+      );
+      assert.strictEqual(error.message, 'Je mag deze stap niet zetten.');
+
+      const conflicts = [
+        {
+          resource: { type: 'administrative-units', id: 'org-1' },
+          key: 'name',
+          base: 'Aalst',
+          current: 'Aalst (ABB)',
+          proposed: 'Stad Aalst',
+          'competing-requests': [],
+        },
+      ];
+      this.fetch.resolves(
+        errorResponse(409, {
+          detail: '1 conflict; approve with "override"',
+          meta: { conflicts, 'conflicts-token': '5ac5a8f6' },
+        }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'goedkeuring'),
+      );
+      assert.strictEqual(error.status, 409);
+      assert.deepEqual(error.conflicts, conflicts, 'the conflicts to review');
+      assert.strictEqual(
+        error.conflictsToken,
+        '5ac5a8f6',
+        'the token that overrides exactly them',
+      );
+      assert.true(error.message.includes('intussen gewijzigd'));
+
+      this.fetch.resolves(
+        errorResponse(422, { detail: 'an afkeuring needs a reason' }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'afkeuring'),
+      );
+      assert.strictEqual(
+        error.message,
+        'an afkeuring needs a reason',
+        'the detail of the service',
+      );
+    });
+
+    test('loadRights keeps what the session may do with requests, and nothing when the service does not answer', async function (assert) {
+      this.fetch.resolves(
+        jsonResponse(200, {
+          'can-create': ['http://example.org/classification/agb'],
+          'can-decide': false,
+        }),
+      );
+
+      const rights = await this.service.loadRights();
+
+      assert.strictEqual(
+        this.fetch.lastCall.args[0],
+        '/change-requests/permissions',
+      );
+      assert.deepEqual(rights, {
+        canDecide: false,
+        canCreate: ['http://example.org/classification/agb'],
+      });
+      assert.deepEqual(this.service.rights, rights, 'kept for the pages');
+
+      this.fetch.resolves(new Response('Bad Gateway', { status: 502 }));
+      sinon.stub(console, 'warn');
+      assert.deepEqual(await this.service.loadRights(), {
+        canDecide: false,
+        canCreate: [],
+      });
+      assert.deepEqual(this.service.rights, {
+        canDecide: false,
+        canCreate: [],
+      });
     });
   });
 
