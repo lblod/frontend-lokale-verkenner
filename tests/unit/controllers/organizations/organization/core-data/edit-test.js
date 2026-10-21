@@ -320,7 +320,7 @@ module(
     test('it creates the primary site with the address and contact points when the contact data is editable', async function (assert) {
       this.owner
         .lookup('service:features')
-        .setup({ 'edit-contact-data': true, 'legal-form-editable': false });
+        .setup({ 'edit-contact-data': true });
       const {
         organization,
         address,
@@ -698,7 +698,7 @@ module(
     test('it leaves the contact point and the SharePoint identifier the route created out of the request when the user left them empty', async function (assert) {
       this.owner
         .lookup('service:features')
-        .setup({ 'edit-contact-data': true, 'legal-form-editable': false });
+        .setup({ 'edit-contact-data': true });
       this.controller.model = await this.coreDataModelWithPlaceholders();
       const {
         organization,
@@ -729,7 +729,7 @@ module(
     test('it submits and links the contact point and the SharePoint identifier the route created once the user filled them in', async function (assert) {
       this.owner
         .lookup('service:features')
-        .setup({ 'edit-contact-data': true, 'legal-form-editable': false });
+        .setup({ 'edit-contact-data': true });
       this.controller.model = await this.coreDataModelWithPlaceholders();
       const {
         organization,
