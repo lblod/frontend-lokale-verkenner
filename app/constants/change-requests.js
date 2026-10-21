@@ -74,6 +74,12 @@ export const KIND_LABELS = {
   [KIND.CHANGE_EVENT]: 'Veranderingsgebeurtenis',
 };
 
+/**
+ * The kinds the overviews list: an edit applies at once, so the service
+ * keeps it as history only (its request page stays reachable).
+ */
+export const LISTED_KINDS = [KIND.CREATION, KIND.CHANGE_EVENT];
+
 export const STEP = {
   SUBMISSION: 'indiening',
   INFORMATION_REQUEST: 'informatievraag',

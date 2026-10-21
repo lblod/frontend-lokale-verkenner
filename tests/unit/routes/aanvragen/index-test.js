@@ -17,7 +17,12 @@ module('Unit | Route | aanvragen/index', function (hooks) {
       [0, 0, 20],
     );
     assert.deepEqual(
-      [until.getHours(), until.getMinutes(), until.getSeconds(), until.getDate()],
+      [
+        until.getHours(),
+        until.getMinutes(),
+        until.getSeconds(),
+        until.getDate(),
+      ],
       [23, 59, 59, 20],
     );
     assert.strictEqual(startOfDay(''), undefined);
@@ -27,6 +32,11 @@ module('Unit | Route | aanvragen/index', function (hooks) {
 
   test('a picked date becomes the day of the query parameter', function (assert) {
     assert.strictEqual(toDay(new Date(2026, 9, 3)), '2026-10-03');
+    assert.strictEqual(
+      toDay(new Date('2026-10-03')),
+      '2026-10-03',
+      'the date picker gives midnight UTC, the evening before west of UTC',
+    );
     assert.strictEqual(toDay(null), '');
     assert.strictEqual(toDay(new Date('x')), '');
   });

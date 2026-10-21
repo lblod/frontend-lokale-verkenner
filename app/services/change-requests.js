@@ -38,6 +38,8 @@ const UNANSWERED_MESSAGE =
   'De wijziging kon niet verstuurd worden, of het antwoord van de dienst kwam niet aan: ze is mogelijk toch doorgevoerd. Herlaad de pagina en controleer of de wijziging is doorgevoerd voor je opnieuw opslaat.';
 const UNREADABLE_ANSWER_MESSAGE =
   'De dienst antwoordde, maar het antwoord kon niet gelezen worden: de wijziging is mogelijk doorgevoerd. Herlaad de pagina en controleer of de wijziging is doorgevoerd voor je opnieuw opslaat.';
+const UNREADABLE_LIST_MESSAGE =
+  'Het antwoord van de dienst kon niet gelezen worden. Herlaad de pagina en probeer opnieuw.';
 
 /**
  * A change request the service refused (403, 422), could not apply (409),
@@ -419,7 +421,12 @@ export default class ChangeRequestsService extends Service {
     if (!response.ok) {
       throw await ChangeRequestError.fromResponse(response, listMessage);
     }
-    const body = await response.json();
+    const body = await jsonOf(response);
+    if (body === undefined) {
+      throw new ChangeRequestError(UNREADABLE_LIST_MESSAGE, {
+        status: response.status,
+      });
+    }
     return {
       requests: Array.isArray(body?.data) ? body.data : [],
       count: body?.meta?.count ?? 0,

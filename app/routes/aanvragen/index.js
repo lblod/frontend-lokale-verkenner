@@ -2,14 +2,18 @@ import Route from '@ember/routing/route';
 import { service } from '@ember/service';
 import { keepLatestTask } from 'ember-concurrency';
 import { query } from '@warp-drive/legacy/compat/builders';
+import { LISTED_KINDS } from 'frontend-organization-portal/constants/change-requests';
 
 /**
  * The list of change requests ("Alle aanvragen"): the page the service
  * answers for the filters, with the organisations and classifications it
- * names resolved to records.
+ * names resolved to records. The service lists creations and change events;
+ * edits, which apply at once, are history only (a request page still shows
+ * one).
  */
 export default class AanvragenIndexRoute extends Route {
   @service changeRequests;
+  @service muSearch;
   @service store;
 
   queryParams = {
@@ -33,8 +37,12 @@ export default class AanvragenIndexRoute extends Route {
   }
 
   loadRequestsTask = keepLatestTask(async (params) => {
+    const page = Number(params.page) || 0;
+    const size = Number(params.size) || 20;
     const { requests, count } = await this.changeRequests.list({
-      kind: params.kind || undefined,
+      // A kind the page does not offer (`edit`, from an old link) is no
+      // filter
+      kind: LISTED_KINDS.includes(params.kind) ? params.kind : undefined,
       mine: params.mine === true || params.mine === 'true',
       requester: params.requester || undefined,
       target: params.organization || undefined,
@@ -43,14 +51,24 @@ export default class AanvragenIndexRoute extends Route {
       createdFrom: startOfDay(params.createdFrom),
       createdUntil: endOfDay(params.createdUntil),
       sort: params.sort || undefined,
-      page: params.page ?? 0,
-      size: params.size ?? 20,
+      page,
+      size,
     });
     const rows = await this.rowsFor(requests);
-    // AuDataTable reads the total from the content's meta
-    rows.meta = { count };
+    // AuDataTable reads the total and the pager's links from the content's
+    // meta, in the shape mu-search gives them
+    rows.meta = {
+      count,
+      pagination: this.muSearch.getPaginationMetadata(page, size, count),
+    };
     return rows;
   });
+
+  setupController(controller) {
+    super.setupController(...arguments);
+    // The filters' selects show records; the URL names their uuids
+    controller.loadSelectedRecords.perform();
+  }
 
   /**
    * One row per request, with the requesting organisation and the
@@ -84,7 +102,10 @@ export default class AanvragenIndexRoute extends Route {
         requester: requesters.get(requesterId) ?? null,
         requesterId,
         targetId: target?.data?.id ?? null,
+        // A creation whose organisation is not registered: one that still
+        // waits, or one that was rejected, withdrawn or failed
         targetPending: target?.meta?.pending === true,
+        targetUnregistered: target?.meta?.registered === false,
         targetName: attributes['target-name'],
         classification:
           classifications.get(attributes['target-classification']) ?? null,

@@ -10,9 +10,11 @@
             <AuLabel for="filter-requester">Aanvrager</AuLabel>
             <OrganizationSelect
               @id="filter-requester"
-              @selected={{if this.requester this.requester}}
+              @classificationCodes={{this.requesterClassificationCodes}}
+              @selected={{this.selectedRequester}}
               @onChange={{this.setRequester}}
               @allowClear={{true}}
+              data-test-filter-requester
             />
           </div>
           <div class="au-o-grid__item au-u-1-1">
@@ -43,23 +45,24 @@
             <AuLabel for="filter-classification">
               Type betrokken organisatie
             </AuLabel>
-            <ClassificationSelect
-              @id="filter-classification"
-              @selected={{if
-                this.targetClassification
-                this.targetClassification
-              }}
-              @onChange={{this.setTargetClassification}}
-              @allowClear={{true}}
-            />
+            <div data-test-filter-classification>
+              <ClassificationSelect
+                @id="filter-classification"
+                @selected={{this.selectedClassification}}
+                @onChange={{this.setTargetClassification}}
+                @allowClear={{true}}
+              />
+            </div>
           </div>
           <div class="au-o-grid__item au-u-1-1">
             <AuLabel for="filter-target">Naam betrokken organisatie</AuLabel>
             <OrganizationSelect
               @id="filter-target"
-              @selected={{if this.organization this.organization}}
+              @classificationCodes={{this.targetClassificationCodes}}
+              @selected={{this.selectedOrganization}}
               @onChange={{this.setOrganization}}
               @allowClear={{true}}
+              data-test-filter-target
             />
           </div>
           <div class="au-o-grid__item au-u-1-2@small au-u-1-1@medium">
@@ -166,10 +169,13 @@
                 {{row.classification.label}}
               {{/if}}
             </td>
-            <td>
+            <td data-test-target>
               {{#if row.targetPending}}
                 {{row.targetName}}
                 <span class="au-u-muted">(in aanvraag)</span>
+              {{else if row.targetUnregistered}}
+                {{row.targetName}}
+                <span class="au-u-muted">(niet geregistreerd)</span>
               {{else if row.targetId}}
                 <AuLink
                   @route="organizations.organization"
