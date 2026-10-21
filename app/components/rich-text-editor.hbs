@@ -1,7 +1,6 @@
 {{#if @show}}
   <AuContent @skin="tiny" class="rich-text-editor-content">
-    {{! template-lint-disable no-triple-curlies}}
-    {{{this.value}}}
+    {{rich-text this.value}}
   </AuContent>
 {{else}}
   <div class="rich-text-editor" {{on "focusout" this.updateValue}}>
