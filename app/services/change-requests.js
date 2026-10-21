@@ -73,7 +73,7 @@ const UNREADABLE_ANSWER_MESSAGE =
  *   kept it with status `mislukt`, and the apply may have stopped half-way,
  *   leaving the keys it changes empty on the master. A new request would
  *   start from the values the page loaded and conflict with that state, so
- *   the page blocks saving (`requestId` names the kept request).
+ *   the page blocks saving and links to the kept request (`requestId`).
  * - `outcomeUnknown`: a 5xx; the service may have applied the request before
  *   the dispatcher or the service itself gave up (e.g. a gateway timeout
  *   after the one-transaction apply). The same when a submit got no answer

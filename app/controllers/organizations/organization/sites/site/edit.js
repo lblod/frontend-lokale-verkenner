@@ -52,7 +52,8 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
    * status mislukt). The service kept it, and the apply may have stopped
    * half-way, leaving the fields it changes empty; a new save would start
    * from the values the page loaded and conflict with that. Saving is
-   * blocked until the page is reloaded.
+   * blocked and the page links to the kept request, where it can be
+   * withdrawn: edits are not listed in "Alle aanvragen".
    */
   @tracked failedRequestId = null;
   /**
@@ -210,7 +211,7 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
         }
         // The records keep their edits so the user can correct and retry,
         // unless the outcome is unknown, a retry could apply the change
-        // twice, or the apply failed: saving stays blocked.
+        // twice, or the apply failed: the page links to the kept request.
         this.saveError = error.message;
         this.saveBlocked = error.outcomeUnknown || error.applyFailed;
         this.failedRequestId = error.applyFailed ? error.requestId : null;

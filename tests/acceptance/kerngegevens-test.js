@@ -1,6 +1,13 @@
 import { module, test } from 'qunit';
 import sinon from 'sinon';
-import { blur, click, fillIn, triggerEvent, visit } from '@ember/test-helpers';
+import {
+  blur,
+  click,
+  fillIn,
+  triggerEvent,
+  visit,
+  waitFor,
+} from '@ember/test-helpers';
 import { authenticateSession } from 'ember-simple-auth/test-support';
 import { setupApplicationTest } from 'frontend-organization-portal/tests/helpers';
 import { CLASSIFICATION } from 'frontend-organization-portal/models/administrative-unit-classification-code';
@@ -192,7 +199,7 @@ module('Acceptance | kerngegevens bewerken', function (hooks) {
     assert.dom('#organization-legal-name').exists('the rest stays editable');
   });
 
-  test('a save whose apply failed keeps saving blocked', async function (assert) {
+  test('a save whose apply failed keeps saving blocked and links to the kept request', async function (assert) {
     // The service kept the request, but applying it failed twice
     this.fetch.withArgs('/change-requests').callsFake(async () =>
       jsonResponse(409, {
@@ -211,8 +218,13 @@ module('Acceptance | kerngegevens bewerken', function (hooks) {
     await fillIn('#organization-legal-name', 'AGB Aalst Noord');
     await blur('#organization-legal-name');
     await click('button[form="edit-core-info-form"]');
+    await waitFor('[data-test-failed-request]');
 
     assert.strictEqual(submits(), 1);
+    assert
+      .dom('[data-test-failed-request]')
+      .hasAttribute('href', `/aanvragen/${REQUEST_ID}`);
+    assert.dom('[data-test-failed-request]').hasText('Bekijk de aanvraag');
     assert.dom('button[form="edit-core-info-form"]').isDisabled();
     assert.dom('#organization-legal-name').hasValue('AGB Aalst Noord');
 
