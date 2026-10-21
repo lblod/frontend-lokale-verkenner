@@ -34,7 +34,6 @@ module(
       this.refresh = sinon.stub(this.router, 'refresh');
       const toaster = this.owner.lookup('service:toaster');
       this.warning = sinon.stub(toaster, 'warning');
-      this.success = sinon.stub(toaster, 'success');
       this.controller = this.owner.lookup(
         'controller:organizations/organization/sites/new',
       );
@@ -263,7 +262,7 @@ module(
       assert.false(this.controller.saveBlocked);
     });
 
-    test('it blocks saving and offers to apply the request again when its apply failed', async function (assert) {
+    test('it blocks saving and keeps the request to link to when its apply failed', async function (assert) {
       const { site } = this.controller.model;
       this.submit.rejects(
         new ChangeRequestError('De wijziging kon niet doorgevoerd worden.', {
@@ -272,29 +271,17 @@ module(
           requestId: REQUEST_ID,
         }),
       );
-      const reapply = sinon.stub(this.changeRequests, 'reapply').resolves();
 
       await this.controller.createSiteTask.perform({ preventDefault() {} });
 
       assert.true(this.controller.saveBlocked);
       assert.strictEqual(this.controller.failedRequestId, REQUEST_ID);
       assert.true(site.isNew, 'the records are kept');
+      assert.true(this.replaceWith.notCalled, 'the page stays');
 
       await this.controller.createSiteTask.perform({ preventDefault() {} });
 
       assert.true(this.submit.calledOnce, 'a second "Voeg toe" sends nothing');
-
-      await this.controller.reapply.perform();
-
-      assert.true(reapply.calledOnceWithExactly(REQUEST_ID));
-      assert.true(this.success.calledOnce);
-      assert.true(
-        this.replaceWith.calledOnceWithExactly(
-          'organizations.organization.sites',
-          'org-1',
-        ),
-        'the list of sites: the uuid of the new site is not known here',
-      );
     });
 
     test('it blocks a retry when the outcome of the request is unknown', async function (assert) {

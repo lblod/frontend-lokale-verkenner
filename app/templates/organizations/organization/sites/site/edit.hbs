@@ -18,11 +18,7 @@
             <AuButton
               @loading={{this.save.isRunning}}
               @loadingMessage="Opslaan"
-              @disabled={{or
-                this.save.isRunning
-                this.reapply.isRunning
-                this.saveBlocked
-              }}
+              @disabled={{or this.save.isRunning this.saveBlocked}}
               type="submit"
               form="edit-vestiging-form"
             >
@@ -31,17 +27,6 @@
           </AuButtonGroup>
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
           <Error::ChangeRequest @message={{this.saveError}} />
-          {{#if this.failedRequestId}}
-            <AuButton
-              @skin="link"
-              @loading={{this.reapply.isRunning}}
-              @loadingMessage="Opnieuw toepassen"
-              data-test-reapply
-              {{on "click" (perform this.reapply)}}
-            >
-              Opnieuw toepassen
-            </AuButton>
-          {{/if}}
           <ReportWrongData />
         </div>
       </:action>

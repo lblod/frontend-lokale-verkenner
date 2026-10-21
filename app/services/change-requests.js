@@ -28,10 +28,16 @@ const APPROVED = 'goedgekeurd';
 const WITHDRAWN = 'ingetrokken';
 const REJECTED = 'afgekeurd';
 
-const isApplied = (status) => status === APPLIED || status === APPROVED;
-
 const APPLY_FAILED_MESSAGE =
-  'De wijziging kon niet doorgevoerd worden: het toepassen ervan mislukte. Je aanvraag is bewaard. Pas ze opnieuw toe, of herlaad de pagina en controleer de gegevens voor je opnieuw opslaat.';
+  'De wijziging kon niet doorgevoerd worden: het toepassen ervan mislukte. Je aanvraag is bewaard. Herlaad de pagina en controleer de gegevens voor je opnieuw opslaat.';
+/**
+ * A submit that got no answer, or one that cannot be read: it may have been
+ * applied or recorded all the same.
+ */
+const UNANSWERED_MESSAGE =
+  'De wijziging kon niet verstuurd worden, of het antwoord van de dienst kwam niet aan: ze is mogelijk toch doorgevoerd. Herlaad de pagina en controleer of de wijziging is doorgevoerd voor je opnieuw opslaat.';
+const UNREADABLE_ANSWER_MESSAGE =
+  'De dienst antwoordde, maar het antwoord kon niet gelezen worden: de wijziging is mogelijk doorgevoerd. Herlaad de pagina en controleer of de wijziging is doorgevoerd voor je opnieuw opslaat.';
 
 /**
  * A change request the service refused (403, 422), could not apply (409),
@@ -39,7 +45,8 @@ const APPLY_FAILED_MESSAGE =
  * was applied but could not be followed up in the browser. `message` is meant
  * for the user; `errors` is the JSON:API errors array of the response, when
  * there was one; `requestId` is the uuid of the request the service kept, for
- * a held request and for one whose apply failed.
+ * a held request, for one whose apply failed and for one that was applied
+ * but could not be followed up.
  *
  * The flags tell the page what to do with its dirty state:
  * - `applied`: the service answered 2xx, so the change is in the application
@@ -66,16 +73,23 @@ const APPLY_FAILED_MESSAGE =
  *   kept it with status `mislukt`, and the apply may have stopped half-way,
  *   leaving the keys it changes empty on the master. A new request would
  *   start from the values the page loaded and conflict with that state, so
- *   the page blocks saving and offers to apply the kept request again
- *   (`reapply`).
+ *   the page blocks saving (`requestId` names the kept request).
  * - `outcomeUnknown`: a 5xx; the service may have applied the request before
  *   the dispatcher or the service itself gave up (e.g. a gateway timeout
- *   after the one-transaction apply). A retry could duplicate the change, so
+ *   after the one-transaction apply). The same when a submit got no answer
+ *   (the request may have reached the service before the connection broke)
+ *   or an answer that cannot be read. A retry could duplicate the change, so
  *   the page blocks it until it is reloaded.
- * - none: the service refused (4xx) or the request never left; the page
- *   keeps its edits for a correction and a retry.
+ * - none: the service refused (4xx) or a step never left; the page keeps its
+ *   edits for a correction and a retry.
  */
 export class ChangeRequestError extends Error {
+  /**
+   * Whether the outcome is unknown for another reason than a 5xx, see
+   * `outcomeUnknown`.
+   */
+  #unanswered;
+
   constructor(
     message,
     {
@@ -89,6 +103,7 @@ export class ChangeRequestError extends Error {
       applyFailed = false,
       requestId = null,
       conflictsToken = null,
+      outcomeUnknown = false,
       cause,
     } = {},
   ) {
@@ -104,10 +119,14 @@ export class ChangeRequestError extends Error {
     this.applyFailed = applyFailed;
     this.requestId = requestId;
     this.conflictsToken = conflictsToken;
+    this.#unanswered = outcomeUnknown;
   }
 
   get outcomeUnknown() {
-    return !this.applied && this.status !== null && this.status >= 500;
+    return (
+      !this.applied &&
+      (this.#unanswered || (this.status !== null && this.status >= 500))
+    );
   }
 
   /**
@@ -534,11 +553,21 @@ export default class ChangeRequestsService extends Service {
    * its id. On another refusal (4xx) nothing is touched, so the page keeps
    * its dirty state, and a `ChangeRequestError` carries the message of the
    * service; a 409 for an apply that failed has `applyFailed` set and the
-   * id of the kept request, see `reapply`. An error after the service
+   * id of the kept request (`requestId`). An error after the service
    * applied the request (the answer lacks the id of a new record, a reload
-   * fails) is a `ChangeRequestError` with `applied` set: the change is in
-   * the application graph, the page must leave and reload instead of
-   * retrying.
+   * fails) is a `ChangeRequestError` with `applied` set and the id of the
+   * request: the change is in the application graph, the page must leave
+   * and reload instead of retrying. When the request changes nothing the
+   * service holds (200 with `meta.unchanged`), the service stores nothing;
+   * the local changes are discarded and the records reloaded as after an
+   * applied request. No answer at all, or one that cannot be read, is a
+   * `ChangeRequestError` with `outcomeUnknown` set: the request may have
+   * been applied or recorded.
+   *
+   * A relationship the page changed without having loaded its value from
+   * the backend has no base the service could compare with, so `submit`
+   * throws (an `Error`, not a `ChangeRequestError`) before anything is
+   * sent; see `serializeBase`.
    *
    * @param {string} aggregate - name of the aggregate, e.g. `organization-core-data`
    * @param {string|null} target - uuid of the organisation the request is
@@ -579,7 +608,11 @@ export default class ChangeRequestsService extends Service {
         target: { data: { type: 'organizations', id: target } },
       };
     }
-    const response = await post(ENDPOINT, document);
+    // A request that got no answer may have reached the service all the
+    // same: the connection can break after the request was sent.
+    const response = await post(ENDPOINT, document, UNANSWERED_MESSAGE, {
+      outcomeUnknown: true,
+    });
 
     if (!response.ok) {
       const error = await ChangeRequestError.fromResponse(response);
@@ -599,8 +632,18 @@ export default class ChangeRequestsService extends Service {
       throw error;
     }
 
-    const body = await response.json();
+    const body = await jsonOf(response);
+    if (body === undefined) {
+      // The service answered, but what it did cannot be told
+      throw new ChangeRequestError(UNREADABLE_ANSWER_MESSAGE, {
+        status: response.status,
+        outcomeUnknown: true,
+      });
+    }
     const attributes = body?.data?.attributes ?? {};
+    const requestId = body?.data?.id ?? null;
+    // Nothing is stored: the request changes nothing the service holds
+    const unchanged = body?.meta?.unchanged === true;
 
     if (attributes.status === SUBMITTED) {
       // Recorded, not applied: the request waits for a decision by ABB
@@ -610,19 +653,20 @@ export default class ChangeRequestsService extends Service {
           ? attributes.conflicts
           : [],
         waiting: true,
-        requestId: body?.data?.id ?? null,
+        requestId,
       });
     }
 
     const mintedIds = attributes.lids ?? {};
 
     // Check before touching the store: without its uuid a new record cannot
-    // be reloaded and the page would lose it.
+    // be reloaded and the page would lose it. An unchanged request has no
+    // new records: a create always changes something.
     for (const [record, lid] of lids) {
-      if (!mintedIds[lid]) {
+      if (!unchanged && !mintedIds[lid]) {
         throw new ChangeRequestError(
           `De wijziging is doorgevoerd, maar het antwoord bevat geen id voor de nieuwe ${record.constructor.modelName} (lid ${lid}). Herlaad de pagina om de nieuwe gegevens te zien.`,
-          { status: response.status, applied: true },
+          { status: response.status, applied: true, requestId },
         );
       }
     }
@@ -631,7 +675,7 @@ export default class ChangeRequestsService extends Service {
     const reloads = records.map((record, index) => ({
       record,
       type: record.constructor.modelName,
-      id: record.isNew ? mintedIds[lids.get(record)] : record.id,
+      id: record.isNew ? (mintedIds[lids.get(record)] ?? null) : record.id,
       isDeleted: record.isDeleted,
       include: record.isNew
         ? Object.keys(operations[index].data.relationships ?? {})
@@ -642,7 +686,8 @@ export default class ChangeRequestsService extends Service {
           ),
     }));
 
-    // The service applied the request: the backend is now the truth
+    // The service applied the request, or found nothing to change: the
+    // backend is now the truth
     for (const record of records) {
       if (record.isNew) {
         // Rolling back a new record unloads it
@@ -661,7 +706,9 @@ export default class ChangeRequestsService extends Service {
         reloads.map(async ({ record, type, id, isDeleted, include }) => {
           saved.set(
             record,
-            isDeleted ? null : await this.refetch(type, id, include),
+            isDeleted || id === null
+              ? null
+              : await this.refetch(type, id, include),
           );
         }),
       );
@@ -670,7 +717,7 @@ export default class ChangeRequestsService extends Service {
       // leaves and reloads instead of retrying, which would apply it twice.
       throw new ChangeRequestError(
         'De wijziging is doorgevoerd, maar de pagina kon niet vernieuwd worden. Herlaad de pagina om de nieuwe gegevens te zien.',
-        { status: response.status, applied: true, cause: error },
+        { status: response.status, applied: true, requestId, cause: error },
       );
     }
 
@@ -690,6 +737,34 @@ export default class ChangeRequestsService extends Service {
     }
 
     return saved;
+  }
+
+  /**
+   * Whether submitting the records would change anything: a new or a
+   * deleted record does, an update only when a key it carries differs from
+   * the value the record was loaded with (its base, see `serializeBase`).
+   * The edit pages leave without a request when nothing changed, rather
+   * than send one the service only answers with `meta.unchanged`. Throws as
+   * `submit` does for a relationship whose value was never loaded.
+   *
+   * @param {Model[]} records - the records `submit` would get
+   * @returns {boolean}
+   */
+  hasChanges(records) {
+    const lids = new Map(
+      records
+        .filter((record) => record.isNew)
+        .map((record) => [record, uuid()]),
+    );
+    return records.some((record) => {
+      const { op, data } = serializeOperation(
+        this.serializerFor(record),
+        this.store.cache,
+        record,
+        lids,
+      );
+      return op !== 'update' || !proposesItsBase(data);
+    });
   }
 
   /**
@@ -825,43 +900,6 @@ export default class ChangeRequestsService extends Service {
   }
 
   /**
-   * Apply a request whose apply failed (`ChangeRequestError.applyFailed`)
-   * again: a hertoepassing step (`POST /change-requests/:id/steps`) applies
-   * its stored versions, which repairs what a half-way apply left. Resolves
-   * once the request is applied, also when it was applied meanwhile.
-   * Rejects with a `ChangeRequestError`: `applyFailed` when the apply failed
-   * once more, `outcomeUnknown` for a 5xx, neither when the step did not
-   * reach the service; all of these may be tried again, a request that is
-   * applied already is not applied twice. `refused` when the service refuses
-   * the step, e.g. because another request on the organisation was applied
-   * after this one failed; the message says why, and the page must be
-   * reloaded.
-   *
-   * @param {string} requestId - uuid of the change request
-   */
-  async reapply(requestId) {
-    const response = await this.takeStep(
-      requestId,
-      'hertoepassing',
-      'De wijziging kon niet verstuurd worden. Controleer de verbinding en probeer opnieuw.',
-    );
-    if (response.ok) {
-      return;
-    }
-
-    const error = await ChangeRequestError.fromResponse(
-      response,
-      reapplyMessage,
-    );
-    // A 409 for a request that is no longer `mislukt` carries its status:
-    // `afgehandeld` when another tab applied it meanwhile.
-    if (error.status === 409 && isApplied(requestStatusOf(error.errors))) {
-      return;
-    }
-    throw error;
-  }
-
-  /**
    * POST a step on a request the service kept.
    *
    * @param {string} requestId - uuid of the change request
@@ -961,11 +999,23 @@ function serializeOperation(serializer, cache, record, lids) {
  * remote state, and an unchanged key as its current value. They are written
  * by the serializer that writes the proposal, through a view of the snapshot
  * that answers with them, so that the base has the keys, the transforms and
- * the resource identifiers of the proposal. The pages load a relationship
- * before they change it, so its remote state is what the server had. A
- * transform can write a changed value in another form than the stored one
- * (`phone` adds "tel:" to a number stored without it); that base is the form
- * the serializer kept when it loaded the record (`loadedForm`).
+ * the resource identifiers of the proposal. A transform can write a changed
+ * value in another form than the stored one (`phone` adds "tel:" to a
+ * number stored without it); that base is the form the serializer kept when
+ * it loaded the record (`loadedForm`).
+ *
+ * The remote state of a relationship is what the server had only when its
+ * value was loaded: the backend sends a relationship that was not included
+ * as a link, which the store reads as nothing, or as empty for a
+ * synchronous one. A page that changes such a relationship would send an
+ * empty base, and the service would see a conflict that is none or add to a
+ * list instead of replacing it. So a relationship the record keeps itself
+ * (one without inverse, as every relationship the pages set) that the page
+ * changed but never loaded (`relationshipLoaded` of the serializer) throws
+ * before anything is sent: the page must load it first. A relationship with
+ * an inverse also changes through its other side (an organisation's change
+ * events follow the organisations of a new change event); the service keeps
+ * such a link on one side and ignores the other.
  *
  * @returns {{ attributes?: Object, relationships?: Object }} the entries for
  *     the carried keys; empty when the operation carries none
@@ -1026,6 +1076,15 @@ function serializeBase(serializer, cache, snapshot, data) {
     }
   }
   snapshot.eachRelationship((name, relationship) => {
+    if (
+      changedRelationships.has(name) &&
+      relationship.options?.inverse === null &&
+      !serializer.relationshipLoaded?.(snapshot.modelName, snapshot.id, name)
+    ) {
+      throw new Error(
+        `The ${snapshot.modelName} ${snapshot.id} changes its relationship "${name}", whose value was never loaded from the backend: the change request cannot carry the value the server has as its base. Load the relationship before the page changes it.`,
+      );
+    }
     if (relationship.kind === 'belongsTo') {
       serializer.serializeBelongsTo(loaded, json, relationship);
     } else {
@@ -1065,6 +1124,51 @@ function carried(base = {}, proposed = {}) {
     return undefined;
   }
   return Object.fromEntries(keys.map((key) => [key, base[key] ?? null]));
+}
+
+/**
+ * Whether an update proposes, for every key it carries, the value it
+ * started from (`meta.base`), so that it changes nothing. A key without a
+ * base counts as a change. Lists (a to-many, a string set) compare as sets,
+ * as the service merges them; a reference to a new record (`lid`) never
+ * equals a base.
+ */
+function proposesItsBase({ attributes = {}, relationships = {}, meta }) {
+  const base = meta?.base ?? {};
+  const sameAttributes = Object.entries(attributes).every(
+    ([key, value]) =>
+      value === undefined ||
+      (key in (base.attributes ?? {}) &&
+        sameValue(value, base.attributes[key])),
+  );
+  const sameRelationships = Object.entries(relationships).every(
+    ([key, value]) =>
+      key in (base.relationships ?? {}) &&
+      sameValue(value?.data ?? null, base.relationships[key]?.data ?? null),
+  );
+  return sameAttributes && sameRelationships;
+}
+
+function sameValue(proposed, base) {
+  if (Array.isArray(proposed) || Array.isArray(base)) {
+    if (!Array.isArray(proposed) || !Array.isArray(base)) {
+      return false;
+    }
+    const keys = (values) => JSON.stringify(values.map(valueKey).sort());
+    return keys(proposed) === keys(base);
+  }
+  return valueKey(proposed) === valueKey(base);
+}
+
+/**
+ * A value as `sameValue` compares it: a resource identifier by type and id
+ * (or lid), anything else by its JSON.
+ */
+function valueKey(value) {
+  if (value && typeof value === 'object' && 'type' in value) {
+    return value.lid ? `lid:${value.lid}` : `${value.type}:${value.id}`;
+  }
+  return JSON.stringify(value ?? null);
 }
 
 /**
@@ -1124,6 +1228,25 @@ function findMessage(status) {
     return 'Je bent niet aangemeld.';
   }
   return undefined;
+}
+
+/**
+ * The message for a KBO number the service refuses (a 409 with
+ * `meta["kbo-number"]`): registered already (`meta.organisation`, the
+ * organisation that holds it), or proposed by a creation that waits
+ * (`meta["change-request"]`). Null for any other error.
+ *
+ * @param {Object[]} [errors] - the JSON:API errors of the answer
+ * @returns {string|null}
+ */
+export function kboConflictMessage(errors = []) {
+  const error = errors.find((candidate) => candidate?.meta?.['kbo-number']);
+  if (!error) {
+    return null;
+  }
+  return error.meta.organisation
+    ? 'Er bestaat al een organisatie met dit KBO-nummer.'
+    : 'Er wacht al een aanvraag voor een organisatie met dit KBO-nummer.';
 }
 
 /**
@@ -1212,20 +1335,6 @@ function withdrawMessage(status, errors) {
 }
 
 /**
- * The message for a hertoepassing the service refused, or undefined for the
- * default one: a failed apply (`applyFailed`) and a 5xx.
- */
-function reapplyMessage(status, errors) {
-  if (status >= 500 || changeRequestOf(errors)?.status === FAILED) {
-    return undefined;
-  }
-  if (status === 409 && isApplied(changeRequestOf(errors)?.status)) {
-    return 'Intussen werd een andere wijziging van deze organisatie doorgevoerd, daarom wordt je aanvraag niet meer toegepast. Herlaad de pagina en voer je wijziging opnieuw in.';
-  }
-  return `Je aanvraag kon niet opnieuw toegepast worden (HTTP ${status}). Herlaad de pagina en voer je wijziging opnieuw in.`;
-}
-
-/**
  * The message of a save the service did not apply: a request that waits for
  * ABB, or a stale edit the service refused.
  */
@@ -1274,10 +1383,23 @@ async function get(url, unsentMessage) {
   }
 }
 
+/**
+ * POST a document to the service.
+ *
+ * @param {string} url
+ * @param {Object} document
+ * @param {string} unsentMessage - the message when no answer comes
+ * @param {Object} [options]
+ * @param {boolean} [options.outcomeUnknown] - whether a POST without answer
+ *     may have been carried out all the same: true for one that a retry
+ *     could duplicate; a step is refused once its request moved on
+ * @returns {Promise<Response>}
+ */
 async function post(
   url,
   document,
   unsentMessage = 'De wijziging kon niet verstuurd worden. Controleer de verbinding en probeer opnieuw.',
+  { outcomeUnknown = false } = {},
 ) {
   try {
     return await fetch(url, {
@@ -1289,6 +1411,21 @@ async function post(
       body: JSON.stringify(document),
     });
   } catch (error) {
-    throw new ChangeRequestError(unsentMessage, { cause: error });
+    throw new ChangeRequestError(unsentMessage, {
+      cause: error,
+      outcomeUnknown,
+    });
+  }
+}
+
+/**
+ * The JSON body of an answer, or undefined when it has none that parses (an
+ * empty body, the HTML of a proxy).
+ */
+async function jsonOf(response) {
+  try {
+    return await response.json();
+  } catch {
+    return undefined;
   }
 }

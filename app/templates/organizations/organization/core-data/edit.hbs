@@ -16,11 +16,7 @@
             <AuButton
               @loading={{this.save.isRunning}}
               @loadingMessage="Opslaan"
-              @disabled={{or
-                this.save.isRunning
-                this.reapply.isRunning
-                this.saveBlocked
-              }}
+              @disabled={{or this.save.isRunning this.saveBlocked}}
               form="edit-core-info-form"
               type="submit"
             >
@@ -29,17 +25,6 @@
           </AuButtonGroup>
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
           <Error::ChangeRequest @message={{this.saveError}} />
-          {{#if this.failedRequestId}}
-            <AuButton
-              @skin="link"
-              @loading={{this.reapply.isRunning}}
-              @loadingMessage="Opnieuw toepassen"
-              data-test-reapply
-              {{on "click" (perform this.reapply)}}
-            >
-              Opnieuw toepassen
-            </AuButton>
-          {{/if}}
           <ReportWrongData />
         </div>
       </:action>
@@ -139,24 +124,20 @@
                     </:content>
                   </Item>
                   {{#unless @model.organization.isWorshipAdministrativeUnit}}
-                    <Item
-                      @labelFor="legal-form"
-                      @required={{true}}
-                      @errorMessage={{@model.organization.error.legalForm.message}}
-                    >
+                    <Item data-test-read-only="legal-form">
                       <:label>Juridische vorm</:label>
-                      <:content as |hasError|>
-                        <LegalFormSelect
-                          @selected={{@model.organization.legalForm}}
-                          @onChange={{fn (mut @model.organization.legalForm)}}
-                          @disabled={{not
-                            (is-feature-enabled "legal-form-editable")
-                          }}
-                          @error={{hasError}}
-                          @triggerId="legal-form"
-                          @id="legal-form-select"
-                        />
+                      <:content>
+                        {{@model.organization.legalForm.label}}
                       </:content>
+                      <:helpText>
+                        Wijzigen kan met een veranderingsgebeurtenis:
+                        <AuLink
+                          @route="organizations.organization.change-events.new"
+                          data-test-change-event-link
+                        >
+                          Voeg veranderingsgebeurtenis toe
+                        </AuLink>
+                      </:helpText>
                     </Item>
                   {{/unless}}
                   {{#if @model.organization.requiresContentThemes}}
@@ -183,22 +164,23 @@
                       @model.organization.classification
                     )
                   }}
-                    <Item
-                      @labelFor="additional-qualifications-select"
-                      @required={{true}}
-                      @errorMessage={{@model.organization.error.additionalQualifications.message}}
-                    >
+                    <Item data-test-read-only="additional-qualifications">
                       <:label>Bijkomende kwalificatie(s)</:label>
-                      <:content as |hasError|>
-                        <AdditionalQualificationsSelect
-                          @selected={{@model.organization.additionalQualifications}}
-                          @onChange={{fn
-                            (mut @model.organization.additionalQualifications)
-                          }}
-                          @error={{hasError}}
-                          @id="additional-qualifications-select"
-                        />
+                      <:content>
+                        {{#each
+                          @model.organization.additionalQualifications
+                          as |qualification index|
+                        }}{{if index ", "}}{{qualification.label}}{{/each}}
                       </:content>
+                      <:helpText>
+                        Wijzigen kan met een veranderingsgebeurtenis:
+                        <AuLink
+                          @route="organizations.organization.change-events.new"
+                          data-test-change-event-link
+                        >
+                          Voeg veranderingsgebeurtenis toe
+                        </AuLink>
+                      </:helpText>
                     </Item>
                     {{#if @model.organization.additionalQualifications}}
                       <Item>
@@ -294,30 +276,20 @@
                       @model.organization.isPrivateOcmwAssociation
                     )
                   }}
-                    <Item
-                      @labelFor="scope"
-                      @required={{true}}
-                      @errorMessage={{@model.organization.error.scope.message}}
-                    >
+                    <Item data-test-read-only="scope">
                       <:label>Werkingsgebied</:label>
                       <:content>
-                        <LocationMultipleSelect
-                          @selected={{this.locationsInScope}}
-                          @onChange={{fn (mut this.locationsInScope)}}
-                          @disabled={{or
-                            @model.organization.disableScopeEdits
-                            this.scopeNotLoaded
-                          }}
-                          @error={{@model.organization.error.scope}}
-                          @id="locations-select"
-                        />
-                        {{#if this.scopeNotLoaded}}
-                          <AuHelpText @warning={{true}}>
-                            Het werkingsgebied kon niet geladen worden en blijft
-                            ongewijzigd bij het opslaan.
-                          </AuHelpText>
-                        {{/if}}
+                        {{@model.scopeLabel}}
                       </:content>
+                      <:helpText>
+                        Wijzigen kan met een veranderingsgebeurtenis:
+                        <AuLink
+                          @route="organizations.organization.change-events.new"
+                          data-test-change-event-link
+                        >
+                          Voeg veranderingsgebeurtenis toe
+                        </AuLink>
+                      </:helpText>
                     </Item>
                   {{/if}}
                   {{#if @model.organization.isIgs}}
@@ -369,7 +341,10 @@
                   {{#if (requires-kbo @model.organization)}}
                     <Item
                       @labelFor="kbo-identifier"
-                      @errorMessage={{@model.identifierKBO.error.structuredIdentifier}}
+                      @errorMessage={{or
+                        this.kboConflict
+                        @model.identifierKBO.error.structuredIdentifier
+                      }}
                       @required={{true}}
                     >
                       <:label>{{@model.identifierKBO.idName}}</:label>

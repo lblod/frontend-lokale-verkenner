@@ -33,7 +33,6 @@ module(
       this.transitionTo = sinon.stub(router, 'transitionTo');
       const toaster = this.owner.lookup('service:toaster');
       this.warning = sinon.stub(toaster, 'warning');
-      this.success = sinon.stub(toaster, 'success');
       this.controller = this.owner.lookup(
         'controller:organizations/organization/sites/site/edit',
       );
@@ -254,8 +253,8 @@ module(
       assert.strictEqual(this.controller.heldRequest, null);
     });
 
-    test('it blocks saving and offers to apply the request again when its apply failed', async function (assert) {
-      const { address, site } = this.controller.model;
+    test('it blocks saving and keeps the request to link to when its apply failed', async function (assert) {
+      const { address } = this.controller.model;
       address.street = 'Markt';
       this.submit.rejects(
         new ChangeRequestError('De wijziging kon niet doorgevoerd worden.', {
@@ -264,26 +263,17 @@ module(
           requestId: REQUEST_ID,
         }),
       );
-      const reapply = sinon
-        .stub(this.owner.lookup('service:change-requests'), 'reapply')
-        .resolves();
 
       await this.controller.save.perform({ preventDefault() {} });
 
       assert.true(this.controller.saveBlocked);
       assert.strictEqual(this.controller.failedRequestId, REQUEST_ID);
       assert.strictEqual(address.street, 'Markt', 'the edits are kept');
+      assert.true(this.transitionTo.notCalled, 'the page stays');
 
-      await this.controller.reapply.perform();
+      await this.controller.save.perform({ preventDefault() {} });
 
-      assert.true(reapply.calledOnceWithExactly(REQUEST_ID));
-      assert.true(this.success.calledOnce);
-      assert.true(
-        this.transitionTo.calledOnceWithExactly(
-          'organizations.organization.sites.site',
-          site.id,
-        ),
-      );
+      assert.true(this.submit.calledOnce, 'a second save sends nothing');
     });
 
     test('it shows the message of the service and keeps the edits when the request is refused', async function (assert) {

@@ -5,7 +5,6 @@ import { setupTest } from 'frontend-organization-portal/tests/helpers';
 import EditController from 'frontend-organization-portal/controllers/organizations/organization/core-data/edit';
 import EditRoute from 'frontend-organization-portal/routes/organizations/organization/core-data/edit';
 import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
-import { ScopeOfOperationError } from 'frontend-organization-portal/services/scope-of-operation';
 import { CLASSIFICATION } from 'frontend-organization-portal/models/administrative-unit-classification-code';
 import { ID_NAME } from 'frontend-organization-portal/models/identifier';
 import { createAddress } from 'frontend-organization-portal/models/address';
@@ -49,13 +48,11 @@ module(
       this.transitionTo = sinon.stub(router, 'transitionTo');
       const toaster = this.owner.lookup('service:toaster');
       this.warning = sinon.stub(toaster, 'warning');
-      this.success = sinon.stub(toaster, 'success');
       this.fetch = sinon.stub(window, 'fetch').resolves(new Response(null));
       this.controller = this.owner.lookup(
         'controller:organizations/organization/core-data/edit',
       );
       this.controller.model = this.coreDataModel();
-      this.controller.locationsInScope = [];
     });
 
     hooks.afterEach(function () {
@@ -663,7 +660,7 @@ module(
       assert.strictEqual(this.controller.formRevision, revision);
     });
 
-    test('it blocks saving and offers to apply the request again when its apply failed', async function (assert) {
+    test('it blocks saving and keeps the request to link to when its apply failed', async function (assert) {
       const { organization } = this.controller.model;
       organization.legalName = 'Stad Test';
       this.submit.rejects(
@@ -673,9 +670,6 @@ module(
           requestId: REQUEST_ID,
         }),
       );
-      const reapply = sinon
-        .stub(this.owner.lookup('service:change-requests'), 'reapply')
-        .resolves();
 
       await this.controller.save.perform({ preventDefault() {} });
 
@@ -695,76 +689,10 @@ module(
         'a new request would conflict with what the failed apply left',
       );
 
-      await this.controller.reapply.perform();
-
-      assert.true(reapply.calledOnceWithExactly(REQUEST_ID));
-      assert.true(
-        this.fetch.calledOnceWith('/kbo-data-sync/structured-kbo', {
-          method: 'POST',
-        }),
-        'the KBO data is synced, as after a save',
-      );
-      assert.true(this.success.calledOnce);
-      assert.true(
-        this.transitionTo.calledOnceWithExactly(
-          'organizations.organization.core-data',
-          'org-1',
-        ),
-        'the page is left, as after a save',
-      );
-    });
-
-    test('an apply that fails again can be tried again; one the service refuses needs a reload', async function (assert) {
-      this.controller.saveBlocked = true;
-      this.controller.failedRequestId = REQUEST_ID;
-      const reapply = sinon.stub(
-        this.owner.lookup('service:change-requests'),
-        'reapply',
-      );
-      reapply.rejects(
-        new ChangeRequestError('Opnieuw mislukt.', {
-          status: 409,
-          applyFailed: true,
-          requestId: REQUEST_ID,
-        }),
-      );
-
-      await this.controller.reapply.perform();
-
-      assert.strictEqual(this.controller.saveError, 'Opnieuw mislukt.');
-      assert.strictEqual(this.controller.failedRequestId, REQUEST_ID);
-
-      // The step did not reach the service
-      reapply.rejects(
-        new ChangeRequestError('De wijziging kon niet verstuurd worden.'),
-      );
-
-      await this.controller.reapply.perform();
-
-      assert.strictEqual(
-        this.controller.failedRequestId,
-        REQUEST_ID,
-        'it can be tried again',
-      );
-
-      reapply.rejects(
-        new ChangeRequestError('Herlaad de pagina.', { status: 409 }),
-      );
-
-      await this.controller.reapply.perform();
-
-      assert.strictEqual(this.controller.saveError, 'Herlaad de pagina.');
-      assert.strictEqual(
-        this.controller.failedRequestId,
-        null,
-        'no request to apply again',
-      );
-      assert.true(this.controller.saveBlocked, 'saving needs a reload');
-      assert.true(this.transitionTo.notCalled);
-
       this.controller.reset();
 
       assert.false(this.controller.saveBlocked);
+      assert.strictEqual(this.controller.failedRequestId, null);
     });
 
     test('it leaves the contact point and the SharePoint identifier the route created out of the request when the user left them empty', async function (assert) {
@@ -865,52 +793,86 @@ module(
       assert.false(this.controller.saveBlocked);
     });
 
-    test('it leaves the werkingsgebied untouched when its locations could not be loaded', async function (assert) {
+    test('the juridische vorm, werkingsgebied and qualifications are sent as they are: the werkingsgebied is not looked up again, and a missing one does not block the save', async function (assert) {
       const { organization, structuredIdentifierKBO } = this.controller.model;
-      const scope = { id: 'location-1' };
-      organization.scope = scope;
-      organization.legalName = 'Stad Test';
-      this.controller.locationsInScope = null;
+      const scopeService = this.owner.lookup('service:scope-of-operation');
       const getScopeForLocations = sinon.stub(
-        this.owner.lookup('service:scope-of-operation'),
+        scopeService,
         'getScopeForLocations',
       );
+      // A gemeente whose data lacks a juridische vorm
+      this.store.push({
+        data: {
+          type: 'organization',
+          id: 'org-1',
+          relationships: { legalForm: { data: null } },
+        },
+      });
+      organization.legalName = 'Stad Test';
       this.submit.resolves(
         new Map([[structuredIdentifierKBO, structuredIdentifierKBO]]),
       );
 
-      assert.true(this.controller.scopeNotLoaded);
-
       await this.controller.save.perform({ preventDefault() {} });
 
       assert.true(getScopeForLocations.notCalled);
-      assert.strictEqual(organization.scope, scope, 'the scope is kept');
+      assert.notOk(
+        this.controller.hasValidationErrors,
+        'the keys a veranderingsgebeurtenis changes are not this page to fill in',
+      );
       assert.true(this.submit.calledOnce);
+      assert.strictEqual(await organization.legalForm, null, 'kept as it is');
     });
 
-    test('it stops with a message when the werkingsgebied cannot be resolved', async function (assert) {
-      const { organization } = this.controller.model;
+    test('a KBO number another organisation has is shown on the field, in Dutch', async function (assert) {
+      const { organization, structuredIdentifierKBO } = this.controller.model;
+      structuredIdentifierKBO.localId = '0987654321';
       organization.legalName = 'Stad Test';
-      this.controller.locationsInScope = [{ id: 'location-1' }];
-      sinon
-        .stub(
-          this.owner.lookup('service:scope-of-operation'),
-          'getScopeForLocations',
-        )
-        .rejects(
-          new ScopeOfOperationError(
-            'Het werkingsgebied kon niet bepaald worden.',
-          ),
-        );
+      this.submit.rejects(
+        new ChangeRequestError('KBO number 0987654321 is registered', {
+          status: 409,
+          errors: [
+            {
+              status: '409',
+              meta: {
+                'kbo-number': '0987654321',
+                organisation: { type: 'organizations', id: 'org-2' },
+              },
+            },
+          ],
+        }),
+      );
 
       await this.controller.save.perform({ preventDefault() {} });
 
+      assert.deepEqual(this.controller.kboConflict, {
+        message: 'Er bestaat al een organisatie met dit KBO-nummer.',
+      });
       assert.strictEqual(
         this.controller.saveError,
-        'Het werkingsgebied kon niet bepaald worden.',
+        'De wijziging werd niet opgeslagen. Controleer het KBO-nummer.',
       );
-      assert.true(this.submit.notCalled, 'nothing is sent');
+      assert.notOk(this.controller.hasValidationErrors);
+      assert.false(this.controller.saveBlocked);
       assert.true(this.transitionTo.notCalled);
+      assert.strictEqual(structuredIdentifierKBO.localId, '0987654321', 'kept');
+
+      this.controller.reset();
+      assert.strictEqual(this.controller.kboConflict, null);
+    });
+
+    test('a save without changes sends no request and leaves the page as after a save', async function (assert) {
+      await this.controller.save.perform({ preventDefault() {} });
+
+      assert.true(this.submit.notCalled);
+      assert.true(this.fetch.notCalled, 'no KBO sync either');
+      assert.true(
+        this.transitionTo.calledOnceWithExactly(
+          'organizations.organization.core-data',
+          'org-1',
+        ),
+      );
+      assert.strictEqual(this.controller.saveError, null);
     });
   },
 );
