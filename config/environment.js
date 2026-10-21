@@ -41,7 +41,8 @@ module.exports = function (environment) {
     contactEmail: 'organisaties.abb@vlaanderen.be',
     environmentName: '{{ENVIRONMENT_NAME}}',
     // Loket voor Lokale Besturen, where the "← Loket" link in the
-    // navigation bar goes; no link without it
+    // navigation bar goes; no link without it. The image fills it in from
+    // the environment variable EMBER_LOKET_URL.
     loketUrl: '{{LOKET_URL}}',
 
     acmidm: {
