@@ -452,7 +452,7 @@ export default class ChangeRequestsService extends Service {
     if (!response.ok) {
       throw await ChangeRequestError.fromResponse(response, findMessage);
     }
-    const body = await response.json();
+    const body = await jsonOf(response);
     if (!body?.data?.id) {
       throw new ChangeRequestError(
         'Het antwoord van de dienst bevat geen aanvraag.',
@@ -500,7 +500,9 @@ export default class ChangeRequestsService extends Service {
     if (!response.ok) {
       throw await ChangeRequestError.fromResponse(response, stepMessage);
     }
-    const body = await response.json();
+    // The step is taken; an answer that cannot be read only means the page
+    // reloads the request instead of showing the answer
+    const body = await jsonOf(response);
     return body?.data ?? null;
   }
 
@@ -1225,16 +1227,20 @@ function listMessage(status) {
 }
 
 /**
- * The message for a request that could not be fetched.
+ * The message for a request that could not be fetched. The service answers
+ * 404 for a request that is not visible to the session as well.
  */
 function findMessage(status) {
   if (status === 404) {
     return 'De aanvraag werd niet gevonden.';
   }
   if (status === 401) {
-    return 'Je bent niet aangemeld.';
+    return 'Je bent niet aangemeld. Meld je opnieuw aan om de aanvraag te bekijken.';
   }
-  return undefined;
+  if (status === 403) {
+    return 'Je mag deze aanvraag niet bekijken.';
+  }
+  return `De aanvraag kon niet opgehaald worden (HTTP ${status}). Probeer het later opnieuw.`;
 }
 
 /**
@@ -1263,6 +1269,15 @@ function stepMessage(status, errors) {
   if (status === 409) {
     if (conflictsOf(errors)) {
       return 'De gegevens zijn intussen gewijzigd; bekijk de verschillen voor je de aanvraag goedkeurt.';
+    }
+    // The KBO number of a creation is checked again before it is approved,
+    // applied again or contested
+    const kboMessage = kboConflictMessage(errors);
+    if (kboMessage) {
+      return `${kboMessage} Deze aanvraag kan daarom niet doorgevoerd worden.`;
+    }
+    if (changeRequestOf(errors)?.status === FAILED) {
+      return 'Het doorvoeren van de aanvraag mislukte. De aanvraag is bewaard met status "Mislukt".';
     }
     const requestStatus = requestStatusOf(errors);
     if (requestStatus) {

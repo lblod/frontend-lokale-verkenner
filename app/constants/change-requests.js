@@ -37,8 +37,7 @@ export const STATUS_DESCRIPTIONS = {
   [STATUS.APPLIED]: 'De gegevens zijn aangepast in het register.',
   [STATUS.REJECTED]: 'De aanvraag is afgekeurd.',
   [STATUS.WITHDRAWN]: 'De aanvraag is ingetrokken.',
-  [STATUS.FAILED]:
-    'Het doorvoeren van de goedgekeurde aanvraag mislukte; ABB past ze opnieuw toe.',
+  [STATUS.FAILED]: 'Het doorvoeren van de aanvraag mislukte.',
 };
 
 /**
@@ -89,6 +88,8 @@ export const STEP = {
   REJECTION: 'afkeuring',
   CONTEST: 'betwisting',
   WITHDRAWAL: 'intrekking',
+  // Not offered by the pages (not in the designs), but the service takes it
+  // through its API, so the history shows it
   REAPPLY: 'hertoepassing',
 };
 
@@ -106,6 +107,27 @@ export const STEP_LABELS = {
   [STEP.WITHDRAWAL]: 'Aanvraag ingetrokken',
   [STEP.REAPPLY]: 'Opnieuw toegepast',
 };
+
+/**
+ * What the history shows for a step that applies the request when the
+ * apply failed (the step has status `mislukt`).
+ */
+const FAILED_STEP_LABELS = {
+  [STEP.HANDLING]: 'Doorvoeren mislukt',
+  [STEP.REAPPLY]: 'Opnieuw toepassen mislukt',
+};
+
+/**
+ * The label of a step with the status it ended in, or the type itself.
+ */
+export function stepLabel(type, status) {
+  return (
+    (status === STATUS.FAILED && FAILED_STEP_LABELS[type]) ||
+    STEP_LABELS[type] ||
+    type ||
+    ''
+  );
+}
 
 /**
  * The steps whose text the "Extra informatie" tab shows as a conversation.

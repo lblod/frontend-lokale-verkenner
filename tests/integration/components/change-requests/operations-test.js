@@ -114,5 +114,30 @@ module(
         .dom(this.element)
         .includesText('Deze aanvraag bevat geen gegevens.');
     });
+
+    test('it renders the Doel of an organisation as cleaned rich text, not as markup', async function (assert) {
+      this.operations = [
+        {
+          op: 'update',
+          data: {
+            type: 'administrative-units',
+            id: 'org-1',
+            attributes: {
+              purpose:
+                '<p>Samenwerking rond <strong>afval</strong></p><img src=x onerror="alert(1)">',
+            },
+            relationships: {},
+          },
+        },
+      ];
+
+      await render(
+        hbs`<ChangeRequests::Operations @operations={{this.operations}} />`,
+      );
+
+      assert.dom('[data-test-rich-text] strong').hasText('afval');
+      assert.dom(this.element).doesNotIncludeText('<p>');
+      assert.dom('[data-test-rich-text] img').doesNotHaveAttribute('onerror');
+    });
   },
 );

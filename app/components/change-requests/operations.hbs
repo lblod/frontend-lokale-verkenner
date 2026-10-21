@@ -32,6 +32,14 @@
                 {{else}}
                   <span class="au-u-muted">Geen</span>
                 {{/if}}
+              {{else if (eq field.kind "rich-text")}}
+                <AuContent
+                  @skin="tiny"
+                  class="rich-text-editor-content"
+                  data-test-rich-text
+                >
+                  {{rich-text field.value}}
+                </AuContent>
               {{else if (eq field.kind "date")}}
                 {{date-format field.value}}
               {{else if (eq field.kind "list")}}

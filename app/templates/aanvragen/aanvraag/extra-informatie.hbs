@@ -7,7 +7,7 @@
             <strong>{{entry.actor}}</strong>
             <span class="au-u-muted">
               &ndash;
-              {{change-request-step-label entry.step.type}}
+              {{change-request-step-label entry.step.type entry.step.status}}
               op
               {{date-time-format entry.step.at}}
             </span>

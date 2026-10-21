@@ -3,6 +3,8 @@ import { action } from '@ember/object';
 import { service } from '@ember/service';
 import { tracked } from '@glimmer/tracking';
 import {
+  KIND,
+  KIND_LABELS,
   PENDING_STATUSES,
   STATUS,
   STATUS_DESCRIPTIONS,
@@ -14,7 +16,12 @@ import {
  * takes the step. Which actions show follows the status of the request and
  * who looks at it: ABB decides (goedkeuring, afkeuring, informatievraag),
  * the requesting organisation answers a question, contests a rejection and
- * withdraws its request. The service checks the same rules on every step.
+ * withdraws its request. An edit, which applies at once, takes none of the
+ * decision steps: a failed one is withdrawn. Applying a failed request again
+ * (a hertoepassing) is not in the designs, so the page does not offer it;
+ * the service still takes that step through its API. The service checks the
+ * same rules on every step. When the request could not be loaded, the model
+ * holds the `error` and the page shows its message.
  */
 export default class AanvragenAanvraagController extends Controller {
   @service currentSession;
@@ -27,11 +34,22 @@ export default class AanvragenAanvraagController extends Controller {
   @tracked openStep = null;
 
   get request() {
-    return this.model.request;
+    return this.model.request ?? null;
   }
 
   get attributes() {
-    return this.request.attributes;
+    return this.request?.attributes ?? {};
+  }
+
+  get title() {
+    return KIND_LABELS[this.attributes.kind] ?? 'Aanvraag';
+  }
+
+  /**
+   * Whether the request is an edit, applied at once without a decision.
+   */
+  get isEdit() {
+    return this.attributes.kind === KIND.EDIT;
   }
 
   get status() {
@@ -70,12 +88,13 @@ export default class AanvragenAanvraagController extends Controller {
   }
 
   get canApprove() {
-    return this.decides && this.status === STATUS.SUBMITTED;
+    return this.decides && !this.isEdit && this.status === STATUS.SUBMITTED;
   }
 
   get canReject() {
     return (
       this.decides &&
+      !this.isEdit &&
       [STATUS.SUBMITTED, STATUS.INFORMATION_REQUESTED, STATUS.FAILED].includes(
         this.status,
       )
@@ -83,19 +102,19 @@ export default class AanvragenAanvraagController extends Controller {
   }
 
   get canAskInformation() {
-    return this.decides && this.status === STATUS.SUBMITTED;
-  }
-
-  get canReapply() {
-    return this.decides && this.status === STATUS.FAILED;
+    return this.decides && !this.isEdit && this.status === STATUS.SUBMITTED;
   }
 
   get canAnswer() {
-    return this.isRequester && this.status === STATUS.INFORMATION_REQUESTED;
+    return (
+      this.isRequester &&
+      !this.isEdit &&
+      this.status === STATUS.INFORMATION_REQUESTED
+    );
   }
 
   get canContest() {
-    return this.isRequester && this.status === STATUS.REJECTED;
+    return this.isRequester && !this.isEdit && this.status === STATUS.REJECTED;
   }
 
   get canWithdraw() {
@@ -112,7 +131,6 @@ export default class AanvragenAanvraagController extends Controller {
       this.canApprove ||
       this.canReject ||
       this.canAskInformation ||
-      this.canReapply ||
       this.canAnswer ||
       this.canContest ||
       this.canWithdraw
@@ -182,6 +200,18 @@ export default class AanvragenAanvraagController extends Controller {
   async stepTaken(document, message) {
     this.openStep = null;
     this.toaster.success(message, 'Aanvraag');
+    await this.router.refresh('aanvragen.aanvraag');
+  }
+
+  /**
+   * A goedkeuring was taken, but applying the request failed: the request is
+   * kept with status `mislukt`, so the page shows it anew, with the steps
+   * that status admits.
+   */
+  @action
+  async applyFailed(message) {
+    this.openStep = null;
+    this.toaster.error(message, 'Doorvoeren mislukt');
     await this.router.refresh('aanvragen.aanvraag');
   }
 

@@ -12,7 +12,7 @@
     {{#each this.history as |entry|}}
       <tr>
         <td>{{date-time-format entry.step.at}}</td>
-        <td>{{change-request-step-label entry.step.type}}</td>
+        <td>{{change-request-step-label entry.step.type entry.step.status}}</td>
         <td>{{entry.actor}}</td>
         <td>
           {{#if entry.step.reason}}

@@ -15,8 +15,7 @@ import {
 const STEPS = {
   [STEP.APPROVAL]: {
     title: 'Aanvraag goedkeuren',
-    intro:
-      'De gegevens van de aanvraag worden doorgevoerd in het register. De aanvrager krijgt hiervan een melding.',
+    intro: 'De gegevens van de aanvraag worden doorgevoerd in het register.',
     textLabel: null,
     confirmLabel: 'Goedkeuren',
     loadingLabel: 'Aanvraag goedkeuren',
@@ -26,7 +25,7 @@ const STEPS = {
   [STEP.REJECTION]: {
     title: 'Aanvraag afkeuren',
     intro:
-      'De aanvrager krijgt hiervan een melding, met de reden. De aanvrager kan de beslissing betwisten.',
+      'De aanvrager ziet de reden van de afkeuring en kan de beslissing betwisten.',
     textLabel: 'Reden van afkeuring',
     textError: 'Geef de reden van de afkeuring.',
     confirmLabel: 'Afkeuren',
@@ -76,23 +75,13 @@ const STEPS = {
     alert: true,
     done: 'De aanvraag is ingetrokken.',
   },
-  [STEP.REAPPLY]: {
-    title: 'Aanvraag opnieuw toepassen',
-    intro:
-      'De goedgekeurde gegevens worden opnieuw doorgevoerd in het register.',
-    textLabel: null,
-    confirmLabel: 'Opnieuw toepassen',
-    loadingLabel: 'Aanvraag toepassen',
-    alert: false,
-    done: 'De aanvraag is doorgevoerd.',
-  },
 };
 
 /**
  * The modal that takes a step on a change request: a decision by ABB
  * (goedkeuring, afkeuring, informatievraag), the requester's answer or
- * contest, a withdrawal, or applying a failed request again. It posts the
- * step to the service and hands the updated request back.
+ * contest, or a withdrawal. It posts the step to the service and hands the
+ * updated request back.
  *
  * Arguments:
  * - `@step`: the step type (`STEP` of the constants)
@@ -101,6 +90,9 @@ const STEPS = {
  * - `@onClose`: called when the user cancels
  * - `@onDone`: called with the updated request document and the message
  *   for the user once the step is taken
+ * - `@onApplyFailed`: called with the message for the user when a
+ *   goedkeuring was taken but applying the request failed: the request is
+ *   now `mislukt`
  */
 export default class ChangeRequestsStepModalComponent extends Component {
   @service changeRequests;
@@ -133,14 +125,16 @@ export default class ChangeRequestsStepModalComponent extends Component {
       this.liveConflicts ?? this.args.request?.attributes?.conflicts ?? [];
     return conflicts.map((conflict) => ({
       label: `${fieldLabel(conflict.resource?.type, conflict.key)}`,
-      current: describe(conflict.current),
-      proposed: describe(conflict.proposed),
+      current: valueParts(conflict.current),
+      proposed: valueParts(conflict.proposed),
     }));
   }
 
   get conflictsToken() {
     return (
-      this.liveToken ?? this.args.request?.attributes?.['conflicts-token'] ?? null
+      this.liveToken ??
+      this.args.request?.attributes?.['conflicts-token'] ??
+      null
     );
   }
 
@@ -175,13 +169,19 @@ export default class ChangeRequestsStepModalComponent extends Component {
         {
           reason: text || null,
           override:
-            this.isApproval && this.conflicts.length ? this.conflictsToken : null,
+            this.isApproval && this.conflicts.length
+              ? this.conflictsToken
+              : null,
         },
       );
       this.args.onDone?.(document, config.done);
     } catch (error) {
       if (!(error instanceof ChangeRequestError)) {
         throw error;
+      }
+      if (error.applyFailed) {
+        this.args.onApplyFailed?.(error.message);
+        return;
       }
       if (this.isApproval && error.status === 409 && error.conflicts.length) {
         // The conflicts changed since they were shown: show the current
@@ -199,17 +199,21 @@ export default class ChangeRequestsStepModalComponent extends Component {
 }
 
 /**
- * A conflict value as the modal lists it.
+ * A conflict value as the modal lists it: its parts, each a text or a
+ * `reference` (`{ type, id }`) to a record, which the modal names
+ * (`ChangeRequests::ResourceReference`); "leeg" for no value.
  */
-export function describe(value) {
+export function valueParts(value) {
   if (value === null || value === undefined || value === '') {
-    return 'leeg';
+    return [{ text: 'leeg' }];
   }
   if (Array.isArray(value)) {
-    return value.length ? value.map(describe).join(', ') : 'leeg';
+    return value.length ? value.flatMap(valueParts) : [{ text: 'leeg' }];
   }
   if (typeof value === 'object') {
-    return value.id ?? JSON.stringify(value);
+    return value.type && value.id
+      ? [{ reference: value }]
+      : [{ text: JSON.stringify(value) }];
   }
-  return String(value);
+  return [{ text: String(value) }];
 }

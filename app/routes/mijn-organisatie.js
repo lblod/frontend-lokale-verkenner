@@ -12,7 +12,11 @@ export default class MijnOrganisatieRoute extends Route {
   @service currentSession;
 
   beforeModel(transition) {
-    this.session.requireAuthentication(transition, 'login');
+    // A visitor who is not logged in goes to the login page, which
+    // `requireAuthentication` started a transition to
+    if (!this.session.requireAuthentication(transition, 'login')) {
+      return;
+    }
 
     const { organizationId } = this.currentSession;
     if (organizationId) {

@@ -27,10 +27,15 @@
           <ul class="au-u-margin-top-small">
             {{#each this.conflicts as |conflict|}}
               <li>
-                <strong>{{conflict.label}}</strong>:
-                nu
-                <em>{{conflict.current}}</em>, de aanvraag stelt
-                <em>{{conflict.proposed}}</em>
+                <strong>{{conflict.label}}</strong>: nu
+                <em><ChangeRequests::ConflictValue
+                    @parts={{conflict.current}}
+                    @operations={{@request.attributes.operations}}
+                  /></em>, de aanvraag stelt
+                <em><ChangeRequests::ConflictValue
+                    @parts={{conflict.proposed}}
+                    @operations={{@request.attributes.operations}}
+                  /></em>
                 voor
               </li>
             {{/each}}

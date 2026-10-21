@@ -12,6 +12,7 @@ const TEMPLATE = hbs`
     @request={{this.request}}
     @onClose={{this.onClose}}
     @onDone={{this.onDone}}
+    @onApplyFailed={{this.onApplyFailed}}
   />
 `;
 
@@ -36,6 +37,7 @@ module(
       );
       this.onClose = sinon.stub();
       this.onDone = sinon.stub();
+      this.onApplyFailed = sinon.stub();
       this.request = {
         id: 'cr-1',
         attributes: {
@@ -61,9 +63,7 @@ module(
 
       assert.dom(this.element).includesText('Aanvraag afkeuren');
       await click('[data-test-step-confirm]');
-      assert
-        .dom(this.element)
-        .includesText('Geef de reden van de afkeuring.');
+      assert.dom(this.element).includesText('Geef de reden van de afkeuring.');
       assert.true(this.takeDecision.notCalled);
 
       await fillIn('[data-test-step-text]', 'Het KBO-nummer klopt niet');
@@ -126,7 +126,13 @@ module(
         new ChangeRequestError('De gegevens zijn intussen gewijzigd.', {
           status: 409,
           conflicts: [
-            { ...CONFLICT, resource: { type: 'addresses', id: 'a-1' }, key: 'street', current: 'Markt', proposed: 'Grote Markt' },
+            {
+              ...CONFLICT,
+              resource: { type: 'addresses', id: 'a-1' },
+              key: 'street',
+              current: 'Markt',
+              proposed: 'Grote Markt',
+            },
           ],
           conflictsToken: 'tok-2',
         }),
@@ -177,6 +183,84 @@ module(
 
       await click('[data-test-step-cancel]');
       assert.true(this.onClose.calledOnce);
+    });
+
+    test('the conflicts name the records a relationship points at, also those the request creates', async function (assert) {
+      this.step = 'goedkeuring';
+      const store = this.owner.lookup('service:store');
+      sinon.stub(store, 'request').callsFake(async ({ data }) => ({
+        content: { id: data.record.id, label: 'Autonoom gemeentebedrijf' },
+      }));
+      this.request = {
+        id: 'cr-1',
+        attributes: {
+          status: 'ingediend',
+          conflicts: [
+            {
+              ...CONFLICT,
+              key: 'legal-form',
+              current: {
+                type: 'concepts',
+                id: '1f6ab8c6-a59e-4fea-9b39-26cb1b2d4c3d',
+              },
+              proposed: { type: 'concepts', id: 'new-legal-form' },
+            },
+          ],
+          'conflicts-token': 'tok-1',
+          operations: [
+            {
+              op: 'create',
+              data: {
+                type: 'concepts',
+                id: 'new-legal-form',
+                attributes: {},
+              },
+            },
+          ],
+        },
+      };
+
+      await render(TEMPLATE);
+
+      assert.dom('[data-test-step-conflicts]').includesText('Juridische vorm');
+      assert
+        .dom('[data-test-step-conflicts]')
+        .includesText(
+          'Autonoom gemeentebedrijf',
+          'the current value by its label',
+        );
+      assert
+        .dom('[data-test-step-conflicts]')
+        .doesNotIncludeText('1f6ab8c6', 'not as a uuid');
+    });
+
+    test('an approval whose apply fails hands the message to the page, which shows the request anew', async function (assert) {
+      this.step = 'goedkeuring';
+      this.takeDecision.rejects(
+        new ChangeRequestError('Het doorvoeren van de aanvraag mislukte.', {
+          status: 409,
+          applyFailed: true,
+          requestId: 'cr-1',
+        }),
+      );
+
+      await render(TEMPLATE);
+      await click('[data-test-step-confirm]');
+
+      assert.true(
+        this.onApplyFailed.calledOnceWithExactly(
+          'Het doorvoeren van de aanvraag mislukte.',
+        ),
+      );
+      assert.true(this.onDone.notCalled);
+    });
+
+    test('the decision modals promise no notification nothing sends', async function (assert) {
+      for (const step of ['goedkeuring', 'afkeuring']) {
+        this.set('step', step);
+        await render(TEMPLATE);
+        assert.dom(this.element).doesNotIncludeText('melding');
+      }
     });
   },
 );

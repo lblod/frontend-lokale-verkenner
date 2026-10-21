@@ -2260,11 +2260,7 @@ module('Unit | Service | change-requests', function (hooks) {
       assert.strictEqual(organization.name, 'Stad Aalst', 'the edits are kept');
 
       const stepError = await rejection(
-        this.service.takeStep(
-          REQUEST_ID,
-          'intrekking',
-          'De stap kon niet verstuurd worden.',
-        ),
+        this.service.takeDecision(REQUEST_ID, 'intrekking'),
       );
       assert.false(
         stepError.outcomeUnknown,
@@ -2444,6 +2440,71 @@ module('Unit | Service | change-requests', function (hooks) {
         },
         'the base is what the server has',
       );
+    });
+  });
+
+  module('messages', function () {
+    function errorResponse(status, meta) {
+      return jsonResponse(status, {
+        errors: [{ status: String(status), title: 'Refused', meta }],
+      });
+    }
+
+    test('a step refused over a KBO number, or whose apply failed, is explained in Dutch', async function (assert) {
+      this.fetch.resolves(
+        errorResponse(409, {
+          'kbo-number': '0123456789',
+          organisation: { type: 'organizations', id: 'org-2' },
+        }),
+      );
+      let error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'goedkeuring'),
+      );
+      assert.strictEqual(
+        error.message,
+        'Er bestaat al een organisatie met dit KBO-nummer. Deze aanvraag kan daarom niet doorgevoerd worden.',
+      );
+
+      this.fetch.resolves(
+        errorResponse(409, {
+          'kbo-number': '0123456789',
+          'change-request': { id: 'other' },
+        }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'betwisting'),
+      );
+      assert.true(error.message.startsWith('Er wacht al een aanvraag'));
+      assert.false(error.applyFailed);
+
+      this.fetch.resolves(
+        errorResponse(409, {
+          'change-request': { id: REQUEST_ID, status: 'mislukt' },
+        }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'goedkeuring'),
+      );
+      assert.true(error.applyFailed);
+      assert.strictEqual(
+        error.message,
+        'Het doorvoeren van de aanvraag mislukte. De aanvraag is bewaard met status "Mislukt".',
+      );
+    });
+
+    test('a request that cannot be fetched says why in Dutch', async function (assert) {
+      for (const [status, expected] of [
+        [404, 'De aanvraag werd niet gevonden.'],
+        [403, 'Je mag deze aanvraag niet bekijken.'],
+        [
+          503,
+          'De aanvraag kon niet opgehaald worden (HTTP 503). Probeer het later opnieuw.',
+        ],
+      ]) {
+        this.fetch.resolves(errorResponse(status, {}));
+        const error = await rejection(this.service.find(REQUEST_ID));
+        assert.strictEqual(error.message, expected);
+      }
     });
   });
 });

@@ -3,6 +3,7 @@ import {
   OPERATION_LABELS,
   fieldLabel,
   fieldRank,
+  isOrganizationType,
   resourceLabel,
 } from 'frontend-organization-portal/constants/change-requests';
 
@@ -36,7 +37,7 @@ export default class ChangeRequestsOperationsComponent extends Component {
             key,
             rank: fieldRank(type, key),
             label: fieldLabel(type, key),
-            ...attributeField(key, value),
+            ...attributeField(key, value, type),
           })),
           ...Object.entries(relationships).map(([key, value]) => ({
             key,
@@ -51,12 +52,16 @@ export default class ChangeRequestsOperationsComponent extends Component {
 }
 
 /**
- * How an attribute value is shown: `kind` is `text`, `date`, `list` or
- * `empty`.
+ * How an attribute value is shown: `kind` is `text`, `date`, `list`,
+ * `rich-text` (the Doel of an organisation, which the rich-text editor
+ * writes as HTML; shown cleaned, see `sanitizeRichText`) or `empty`.
  */
-export function attributeField(key, value) {
+export function attributeField(key, value, type) {
   if (value === null || value === undefined || value === '') {
     return { kind: 'empty', value: null };
+  }
+  if (key === 'purpose' && isOrganizationType(type)) {
+    return { kind: 'rich-text', value: String(value) };
   }
   if (Array.isArray(value)) {
     return { kind: 'list', value: value.map(String) };

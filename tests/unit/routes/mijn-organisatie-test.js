@@ -12,7 +12,9 @@ module('Unit | Route | mijn-organisatie', function (hooks) {
   test('it lands a logged-in user on the kerngegevens of their organisation, or on the unauthorized page without one', function (assert) {
     const route = this.owner.lookup('route:mijn-organisatie');
     const session = this.owner.lookup('service:session');
-    sinon.stub(session, 'requireAuthentication');
+    const requireAuthentication = sinon
+      .stub(session, 'requireAuthentication')
+      .returns(true);
     const replaceWith = sinon.stub(
       this.owner.lookup('service:router'),
       'replaceWith',
@@ -33,5 +35,30 @@ module('Unit | Route | mijn-organisatie', function (hooks) {
     organizationId.get(() => undefined);
     route.beforeModel({});
     assert.true(replaceWith.calledOnceWithExactly('unauthorized'));
+
+    // Not logged in: `requireAuthentication` sends the visitor to the login
+    // page, and nothing may take them elsewhere
+    replaceWith.resetHistory();
+    requireAuthentication.returns(false);
+    route.beforeModel({});
+    assert.true(replaceWith.notCalled);
+  });
+
+  test('the request pages send a visitor who is not logged in to the login page only', async function (assert) {
+    const route = this.owner.lookup('route:aanvragen');
+    sinon
+      .stub(this.owner.lookup('service:session'), 'requireAuthentication')
+      .returns(false);
+    const transitionTo = sinon.stub(
+      this.owner.lookup('service:router'),
+      'transitionTo',
+    );
+
+    await route.beforeModel({});
+
+    assert.true(
+      transitionTo.notCalled,
+      'not to the start page, although no role is active',
+    );
   });
 });
