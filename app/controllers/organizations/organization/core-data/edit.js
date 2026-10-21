@@ -240,14 +240,13 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
 
       records.push(setEmptyStringsToNull(organization));
 
-      // Nothing changed: no request, the page is left as after a save
-      if (!this.changeRequests.hasChanges(records)) {
-        this.leave(organization.id);
-        return;
-      }
-
       let saved;
       try {
+        // Nothing changed: no request, the page is left as after a save
+        if (!this.changeRequests.hasChanges(records)) {
+          this.leave(organization.id);
+          return;
+        }
         saved = await this.changeRequests.submit(
           'organization-core-data',
           organization.id,

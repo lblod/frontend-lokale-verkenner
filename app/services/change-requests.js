@@ -871,8 +871,16 @@ function serializeBase(serializer, cache, snapshot, data) {
       relationship.options?.inverse === null &&
       !serializer.relationshipLoaded?.(snapshot.modelName, snapshot.id, name)
     ) {
-      throw new Error(
-        `The ${snapshot.modelName} ${snapshot.id} changes its relationship "${name}", whose value was never loaded from the backend: the change request cannot carry the value the server has as its base. Load the relationship before the page changes it.`,
+      // A fault of the page, not of the user: shown on the page like any
+      // refusal instead of ending the save as an uncaught error, with the
+      // explanation for the developer as its cause
+      throw new ChangeRequestError(
+        `De wijziging van "${name}" kan niet verstuurd worden: de huidige waarde ervan werd niet geladen (${snapshot.modelName} ${snapshot.id}). Herlaad de pagina en probeer opnieuw.`,
+        {
+          cause: new Error(
+            `The ${snapshot.modelName} ${snapshot.id} changes its relationship "${name}", whose value was never loaded from the backend: the change request cannot carry the value the server has as its base. Load the relationship before the page changes it.`,
+          ),
+        },
       );
     }
     if (relationship.kind === 'belongsTo') {

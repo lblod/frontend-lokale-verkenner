@@ -2094,14 +2094,14 @@ module('Unit | Service | change-requests', function (hooks) {
       organization.legalForm = legalForm;
       await assert.rejects(
         this.service.submit('change-event', 'org-1', [organization]),
-        /legalForm.*never loaded/,
+        /legalForm.*niet geladen/,
       );
 
       this.service.rollbackRelationships(organization);
       organization.additionalQualifications = [qualification];
       await assert.rejects(
         this.service.submit('change-event', 'org-1', [organization]),
-        /additionalQualifications.*never loaded/,
+        /additionalQualifications.*niet geladen/,
       );
       assert.true(this.fetch.notCalled, 'nothing is sent');
     });
