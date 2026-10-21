@@ -192,7 +192,8 @@ apply (block saving, see [Failed applies](#failed-applies)).
   - `outcomeUnknown` (a `5xx`, no answer at all, or a `2xx` whose body cannot
     be read): the service may have applied or recorded the request; the page
     shows the message and blocks the save button until it is reloaded, since
-    a retry could apply the change twice;
+    a retry could apply the change twice. No answer while the browser reports
+    it is offline is "not sent": the page keeps the save button;
   - `applied` (the service answered `2xx` but the answer lacks a minted id or
     a reload failed): the change is in the application graph; the page leaves
     with a warning toast, the index page loads the applied state;
