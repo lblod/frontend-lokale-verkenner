@@ -3,24 +3,40 @@ import { service } from '@ember/service';
 import { dropTask } from 'ember-concurrency';
 import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
+import { findAll } from '@warp-drive/legacy/compat/builders';
 import { combineFullAddress } from 'frontend-organization-portal/models/address';
 import { setEmptyStringsToNull } from 'frontend-organization-portal/utils/empty-string-to-null';
 import { CLASSIFICATION } from 'frontend-organization-portal/models/administrative-unit-classification-code';
 import isContactEditableOrganization from 'frontend-organization-portal/utils/editable-contact-data';
-import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
+import {
+  ChangeRequestError,
+  kboConflictMessage,
+} from 'frontend-organization-portal/services/change-requests';
 import { isLoaded } from 'frontend-organization-portal/utils/records';
 import requiresKbo from '../../helpers/requires-kbo';
 
 /**
+ * The site type "Maatschappelijke zetel", which OP gives the primary site of
+ * a new organisation of some types (see `registeredOfficeTypeFor`).
+ */
+const MAATSCHAPPELIJKE_ZETEL = 'f1381723dec42c0b6ba6492e41d6f5dd';
+
+/**
+ * The message for a request whose outcome is unknown.
+ */
+const OUTCOME_UNKNOWN_MESSAGE =
+  'Het is niet zeker of je aanvraag werd verwerkt. Herlaad de pagina en kijk onder "Alle aanvragen" of ze werd ontvangen voor je ze opnieuw verstuurt.';
+
+/**
  * The form that requests a new organisation: the organisation with its
  * KBO and SharePoint identifiers, its primary site with address and contact
- * points, and its oprichting as a change event with the link to the
- * besluit, submitted as one change request (aggregate `new-organisation`).
- * The service checks that the session may request an organisation of the
- * chosen classification ("Wie beheert") and that the KBO number is free. A
- * request by ABB is applied at once and the page goes to the new
- * organisation; anyone else's request waits for ABB and the page goes to the
- * request.
+ * points, and its oprichting as a change event with its date, its result and
+ * the link to the besluit, submitted as one change request (aggregate
+ * `new-organisation`). The service checks that the session may request an
+ * organisation of the chosen classification ("Wie beheert") and that the KBO
+ * number is free. A request by ABB is applied at once and the page goes to
+ * the new organisation; anyone else's request waits for ABB and the page
+ * goes to the request.
  *
  * The related organisations of the new one (its founder, its members) are
  * not part of the request yet: they follow with the related-organisations
@@ -51,6 +67,26 @@ export default class OrganizationsNewController extends Controller {
    * The message of the change-request service when it refused the request.
    */
   @tracked saveError = null;
+
+  /**
+   * Set when the service refused the KBO number, registered or requested
+   * already: `{ message }`, shown on the field. It is not a validation
+   * error of the form, which would say a required field is empty.
+   */
+  @tracked kboConflict = null;
+
+  /**
+   * Whether sending is blocked until the page is reloaded: the last attempt
+   * ended without knowing whether the service recorded or applied it (a
+   * 5xx, no answer), and a new one could register the organisation twice.
+   */
+  @tracked saveBlocked = false;
+
+  /**
+   * The result of the oprichting the last attempt created, unloaded before
+   * the next one and when the page is left.
+   */
+  changeEventResult = null;
 
   /**
    * The classifications the session may request a new organisation of, as
@@ -91,6 +127,7 @@ export default class OrganizationsNewController extends Controller {
       (requiresKbo(this.currentOrganizationModel) &&
         this.model.identifierKBO.error) ||
       this.model.identifierSharepoint.error ||
+      this.model.changeEvent.error ||
       this.model.decision.error,
     );
   }
@@ -109,6 +146,7 @@ export default class OrganizationsNewController extends Controller {
   setKbo(event) {
     this.model.structuredIdentifierKBO.localId =
       event.target.inputmask.unmaskedvalue();
+    this.kboConflict = null;
   }
 
   @action
@@ -189,6 +227,10 @@ export default class OrganizationsNewController extends Controller {
         CLASSIFICATION.PEVA_PROVINCE.id,
         CLASSIFICATION.INTERLOKALE_VERENIGING.id,
         CLASSIFICATION.VERVOERREGIORAAD.id,
+        // A bestuurseenheid in the register, which OP creates as a bare
+        // organisation; the change-request service registers only
+        // administrative units and registered organisations
+        CLASSIFICATION.VLAAMSE_GEMEENSCHAPSCOMMISSIE.id,
       ].includes(classificationCodeId)
     ) {
       return this.store.createRecord('administrative-unit');
@@ -221,7 +263,11 @@ export default class OrganizationsNewController extends Controller {
 
   submitRequestTask = dropTask(async (event) => {
     event.preventDefault();
+    if (this.saveBlocked) {
+      return;
+    }
     this.saveError = null;
+    this.kboConflict = null;
 
     const organization = this.currentOrganizationModel;
     const {
@@ -247,6 +293,11 @@ export default class OrganizationsNewController extends Controller {
       return;
     }
 
+    // A link the user added but left empty is no link
+    decision.documentLinks = decision.documentLinks.filter((link) =>
+      link?.trim(),
+    );
+
     const requiresKboNumber = requiresKbo(organization);
     await Promise.all([
       organization.validate(),
@@ -254,6 +305,8 @@ export default class OrganizationsNewController extends Controller {
         ? identifierKBO.validate()
         : identifierKBO.resetErrors(),
       identifierSharepoint.validate(),
+      // The date of the oprichting, which a new change event requires
+      changeEvent.validate(),
       decision.validate(),
     ]);
     if (this.contactDataEditable) {
@@ -267,9 +320,23 @@ export default class OrganizationsNewController extends Controller {
       return;
     }
 
-    // The records of the request, dependencies first
+    let siteType = null;
+    if (this.contactDataEditable) {
+      try {
+        siteType = await this.registeredOfficeTypeFor(organization);
+      } catch (error) {
+        console.error('The site types could not be loaded:', error);
+        this.saveError =
+          'De types van vestigingen konden niet geladen worden. Probeer opnieuw.';
+        return;
+      }
+    }
+
+    // The records of the request, dependencies first. Relationships are
+    // assigned rather than added to, so that an attempt after a refusal
+    // sends the same.
     const records = [];
-    const identifiers = await organization.identifiers;
+    const identifiers = [];
     if (requiresKboNumber) {
       records.push(
         setEmptyStringsToNull(structuredIdentifierKBO),
@@ -284,6 +351,7 @@ export default class OrganizationsNewController extends Controller {
       );
       identifiers.push(identifierSharepoint);
     }
+    organization.identifiers = identifiers;
     if (this.contactDataEditable) {
       if (!address.isPostcodeInFlanders) {
         address.province = '';
@@ -295,13 +363,36 @@ export default class OrganizationsNewController extends Controller {
         setEmptyStringsToNull(address),
       );
       primarySite.address = address;
-      (await primarySite.contacts).push(contact, secondaryContact);
+      primarySite.contacts = [contact, secondaryContact];
+      primarySite.siteType = siteType;
       records.push(primarySite);
+      // The primary site only: `sites` holds the other ones, as in OP
       organization.primarySite = primarySite;
-      (await organization.sites).push(primarySite);
     }
-    records.push(decision, changeEvent, setEmptyStringsToNull(organization));
-    (await changeEvent.originalOrganizations).push(organization);
+    // The oprichting results in the organisation, with the status it starts
+    // with: the organisation's page lists its change events through their
+    // results, as the change-event form records them
+    if (isLoaded(this.changeEventResult) && this.changeEventResult.isNew) {
+      this.changeEventResult.unloadRecord();
+    }
+    const changeEventResult = this.store.createRecord('change-event-result', {
+      status: await organization.organizationStatus,
+      resultingOrganization: organization,
+      resultFrom: changeEvent,
+    });
+    this.changeEventResult = changeEventResult;
+    changeEvent.originalOrganizations = [organization];
+    changeEvent.resultingOrganizations = [organization];
+    // The besluit, when one was filled in
+    changeEvent.decision = decision.isEmpty ? null : decision;
+    if (!decision.isEmpty) {
+      records.push(decision);
+    }
+    records.push(
+      changeEvent,
+      changeEventResult,
+      setEmptyStringsToNull(organization),
+    );
 
     let saved;
     try {
@@ -317,20 +408,62 @@ export default class OrganizationsNewController extends Controller {
       if (!(error instanceof ChangeRequestError)) {
         throw error;
       }
-      if (error.held && error.waiting && error.requestId) {
-        // Recorded: the request waits for ABB
-        this.toaster.success(
-          'De aanvraag is verstuurd en wordt gevalideerd door ABB.',
-          'Aanvraag verstuurd',
-        );
+      if (error.applied) {
+        // ABB's organisation is registered, but the page could not follow
+        // it up: the request shows it
+        this.toaster.warning(error.message, 'Organisatie toegevoegd');
+        if (error.requestId) {
+          this.router.replaceWith('aanvragen.aanvraag', error.requestId);
+        } else {
+          this.router.replaceWith('organizations');
+        }
+        return;
+      }
+      if (error.applyFailed && error.requestId) {
+        // ABB's request is kept, but registering the organisation failed:
+        // the request page shows why
+        this.toaster.warning(error.message, 'Doorvoeren mislukt');
         this.router.replaceWith('aanvragen.aanvraag', error.requestId);
+        return;
+      }
+      if (error.held && error.waiting && error.requestId) {
+        // Recorded: the request waits
+        if (this.appliesAtOnce) {
+          // ABB's own request waits when data it changes was changed
+          // meanwhile: ABB reviews the differences on the request page
+          this.toaster.warning(
+            'De aanvraag is bewaard, maar nog niet doorgevoerd: intussen werden gegevens gewijzigd die ze ook wijzigt. Bekijk de verschillen en keur de aanvraag goed.',
+            'Aanvraag wacht op goedkeuring',
+          );
+        } else {
+          this.toaster.success(
+            'De aanvraag is verstuurd en wordt gevalideerd door ABB.',
+            'Aanvraag verstuurd',
+          );
+        }
+        this.router.replaceWith('aanvragen.aanvraag', error.requestId);
+        return;
+      }
+      if (error.held) {
+        // Not recorded, and the records of the form are gone: the page
+        // must be reloaded
+        this.saveError = error.message;
+        this.saveBlocked = true;
         return;
       }
       const kboMessage = kboConflictMessage(error.errors);
       if (kboMessage) {
-        identifierKBO.addError('structuredIdentifier', kboMessage);
+        this.kboConflict = { message: kboMessage };
+        this.saveError =
+          'De aanvraag werd niet verstuurd. Controleer het KBO-nummer.';
+        return;
       }
-      this.saveError = error.message;
+      // Refused: the form keeps its values for a correction. When the
+      // outcome is unknown only a reload tells whether to send it again.
+      this.saveError = error.outcomeUnknown
+        ? OUTCOME_UNKNOWN_MESSAGE
+        : error.message;
+      this.saveBlocked = error.outcomeUnknown;
       return;
     }
 
@@ -340,6 +473,38 @@ export default class OrganizationsNewController extends Controller {
       saved.get(organization).id,
     );
   });
+
+  /**
+   * The site type of the primary site of a new organisation: as in OP,
+   * "Maatschappelijke zetel" for an AGB, APB, IGS, politiezone,
+   * hulpverleningszone, OCMW-vereniging, PEVA or Andere, none for the
+   * others. The type is looked up among the site types, as OP does: a code
+   * list that lacks it leaves the site without type.
+   *
+   * @param {OrganizationModel} organization
+   * @returns {Promise<SiteTypeModel|null>}
+   */
+  async registeredOfficeTypeFor(organization) {
+    if (!(
+      organization.isAgb ||
+      organization.isApb ||
+      // OP reads `isIGS`, which no model has, so OP leaves an IGS
+      // without type
+      organization.isIgs ||
+      organization.isPoliceZone ||
+      organization.isAssistanceZone ||
+      organization.isOcmwAssociation ||
+      organization.isPevaMunicipality ||
+      organization.isPevaProvince ||
+      organization.isAndere
+    )) {
+      return null;
+    }
+    const { content: siteTypes } = await this.store.request(
+      findAll('site-type'),
+    );
+    return siteTypes.find((type) => type.id === MAATSCHAPPELIJKE_ZETEL) ?? null;
+  }
 
   reset() {
     // Every record of the page is new. Once the request was submitted they
@@ -358,28 +523,18 @@ export default class OrganizationsNewController extends Controller {
       model.structuredIdentifierSharepoint,
       model.changeEvent,
       model.decision,
+      this.changeEventResult,
     ]) {
       if (isLoaded(record) && record.isNew) {
         record.deleteRecord();
         record.unloadRecord();
       }
     }
+    this.changeEventResult = null;
     this.locations = null;
     this.reason = '';
     this.saveError = null;
+    this.kboConflict = null;
+    this.saveBlocked = false;
   }
-}
-
-/**
- * The message for a KBO number the service refuses: registered already, or
- * proposed by a request that waits (`meta["kbo-number"]` of the 409).
- */
-export function kboConflictMessage(errors = []) {
-  const error = errors.find((candidate) => candidate?.meta?.['kbo-number']);
-  if (!error) {
-    return null;
-  }
-  return error.meta.organisation
-    ? 'Er bestaat al een organisatie met dit KBO-nummer.'
-    : 'Er wacht al een aanvraag voor een organisatie met dit KBO-nummer.';
 }

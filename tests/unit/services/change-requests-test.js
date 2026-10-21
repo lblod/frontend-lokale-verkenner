@@ -2189,6 +2189,573 @@ module('Unit | Service | change-requests', function (hooks) {
         },
       });
     });
+
+    test('new-organisation: an AGB with its KBO number, site, besluit and oprichting', async function (assert) {
+      const [classification, status, legalForm, oprichting, siteType] =
+        this.store.push({
+          data: [
+            {
+              type: 'administrative-unit-classification-code',
+              id: CLASSIFICATION.AGB.id,
+            },
+            { type: 'organization-status-code', id: 'status-active' },
+            { type: 'concept', id: 'legal-form-1' },
+            { type: 'change-event-type', id: 'type-oprichting' },
+            { type: 'site-type', id: 'site-type-zetel' },
+          ],
+        });
+      const organization = this.store.createRecord('administrative-unit', {
+        name: 'AGB Aalst',
+        legalName: 'AGB Aalst',
+        classification,
+        organizationStatus: status,
+        legalForm,
+      });
+      const kboStructured = this.store.createRecord('structured-identifier', {
+        localId: '0123456789',
+      });
+      const kboIdentifier = this.store.createRecord('identifier', {
+        idName: ID_NAME.KBO,
+        structuredIdentifier: kboStructured,
+      });
+      organization.identifiers = [kboIdentifier];
+      const address = this.store.createRecord('address', {
+        street: 'Grote Markt',
+        number: '1',
+        postcode: '9300',
+        municipality: 'Aalst',
+        country: 'België',
+        fullAddress: 'Grote Markt 1, 9300 Aalst, België',
+      });
+      const contact = createPrimaryContact(this.store);
+      contact.email = 'info@agb-aalst.be';
+      const secondaryContact = createSecondaryContact(this.store);
+      const site = this.store.createRecord('site', {
+        address,
+        contacts: [contact, secondaryContact],
+        siteType,
+      });
+      organization.primarySite = site;
+      const decision = this.store.createRecord('decision', {
+        documentLinks: ['https://aalst.be/besluiten/2026/123'],
+      });
+      const changeEvent = this.store.createRecord('change-event', {
+        type: oprichting,
+        description: 'Oprichting',
+        date: new Date(2026, 9, 1),
+        decision,
+        originalOrganizations: [organization],
+        resultingOrganizations: [organization],
+      });
+      const result = this.store.createRecord('change-event-result', {
+        status,
+        resultingOrganization: organization,
+        resultFrom: changeEvent,
+      });
+      waitForAbb(this.fetch, this.adapter);
+
+      await rejection(
+        this.service.submit(
+          'new-organisation',
+          null,
+          [
+            kboStructured,
+            kboIdentifier,
+            contact,
+            secondaryContact,
+            address,
+            site,
+            decision,
+            changeEvent,
+            result,
+            organization,
+          ],
+          { reason: 'Opgericht bij besluit van 1 oktober 2026' },
+        ),
+      );
+
+      assert.deepEqual(postedDocument(this.fetch), {
+        data: {
+          type: 'change-requests',
+          attributes: {
+            aggregate: 'new-organisation',
+            operations: [
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'local-id': '0123456789',
+                  },
+                  type: 'structured-identifiers',
+                  lid: 'lid-1',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'id-name': 'KBO nummer',
+                  },
+                  type: 'identifiers',
+                  lid: 'lid-2',
+                  relationships: {
+                    'structured-identifier': {
+                      data: {
+                        type: 'structured-identifiers',
+                        lid: 'lid-1',
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    email: 'info@agb-aalst.be',
+                    telephone: null,
+                    type: 'Primary',
+                    'harvest-date': null,
+                  },
+                  type: 'contact-points',
+                  lid: 'lid-3',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    telephone: null,
+                    type: 'Secondary',
+                    'harvest-date': null,
+                  },
+                  type: 'contact-points',
+                  lid: 'lid-4',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    number: '1',
+                    street: 'Grote Markt',
+                    postcode: '9300',
+                    municipality: 'Aalst',
+                    country: 'België',
+                    'full-address': 'Grote Markt 1, 9300 Aalst, België',
+                    'harvest-date': null,
+                  },
+                  type: 'addresses',
+                  lid: 'lid-5',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {},
+                  relationships: {
+                    contacts: {
+                      data: [
+                        {
+                          type: 'contact-points',
+                          lid: 'lid-3',
+                        },
+                        {
+                          type: 'contact-points',
+                          lid: 'lid-4',
+                        },
+                      ],
+                    },
+                    'site-type': {
+                      data: {
+                        type: 'site-types',
+                        id: 'site-type-zetel',
+                      },
+                    },
+                    address: {
+                      data: {
+                        type: 'addresses',
+                        lid: 'lid-5',
+                      },
+                    },
+                  },
+                  type: 'sites',
+                  lid: 'lid-6',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'publication-date': null,
+                    'document-links': ['https://aalst.be/besluiten/2026/123'],
+                  },
+                  type: 'decisions',
+                  lid: 'lid-7',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    date: '2026-10-01',
+                    description: 'Oprichting',
+                  },
+                  relationships: {
+                    type: {
+                      data: {
+                        type: 'change-event-types',
+                        id: 'type-oprichting',
+                      },
+                    },
+                    'resulting-organizations': {
+                      data: [
+                        {
+                          type: 'administrative-units',
+                          lid: 'lid-8',
+                        },
+                      ],
+                    },
+                    'original-organizations': {
+                      data: [
+                        {
+                          type: 'administrative-units',
+                          lid: 'lid-8',
+                        },
+                      ],
+                    },
+                    results: {
+                      data: [
+                        {
+                          type: 'change-event-results',
+                          lid: 'lid-9',
+                        },
+                      ],
+                    },
+                    decision: {
+                      data: {
+                        type: 'decisions',
+                        lid: 'lid-7',
+                      },
+                    },
+                  },
+                  type: 'change-events',
+                  lid: 'lid-10',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {},
+                  relationships: {
+                    status: {
+                      data: {
+                        type: 'organization-status-codes',
+                        id: 'status-active',
+                      },
+                    },
+                    'result-from': {
+                      data: {
+                        type: 'change-events',
+                        lid: 'lid-10',
+                      },
+                    },
+                    'resulting-organization': {
+                      data: {
+                        type: 'administrative-units',
+                        lid: 'lid-8',
+                      },
+                    },
+                  },
+                  type: 'change-event-results',
+                  lid: 'lid-9',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    name: 'AGB Aalst',
+                    'legal-name': 'AGB Aalst',
+                    'alternative-name': [],
+                    'expected-end-date': null,
+                  },
+                  relationships: {
+                    classification: {
+                      data: {
+                        type: 'administrative-unit-classification-codes',
+                        id: '36a82ba0-7ff1-4697-a9dd-2e94df73b721',
+                      },
+                    },
+                    'legal-form': {
+                      data: {
+                        type: 'concepts',
+                        id: 'legal-form-1',
+                      },
+                    },
+                    'organization-status': {
+                      data: {
+                        type: 'organization-status-codes',
+                        id: 'status-active',
+                      },
+                    },
+                    identifiers: {
+                      data: [
+                        {
+                          type: 'identifiers',
+                          lid: 'lid-2',
+                        },
+                      ],
+                    },
+                    'changed-by': {
+                      data: [
+                        {
+                          type: 'change-events',
+                          lid: 'lid-10',
+                        },
+                      ],
+                    },
+                    'resulted-from': {
+                      data: [
+                        {
+                          type: 'change-events',
+                          lid: 'lid-10',
+                        },
+                      ],
+                    },
+                    'primary-site': {
+                      data: {
+                        type: 'sites',
+                        lid: 'lid-6',
+                      },
+                    },
+                  },
+                  type: 'administrative-units',
+                  lid: 'lid-8',
+                },
+              },
+            ],
+            reason: 'Opgericht bij besluit van 1 oktober 2026',
+          },
+        },
+      });
+    });
+
+    test('change-event: a naamswijziging of a gemeente with its besluit', async function (assert) {
+      const [organization, status, nameChange] = this.store.push({
+        data: [
+          {
+            type: 'administrative-unit',
+            id: 'org-1',
+            attributes: { name: 'Aalst', legalName: 'Aalst' },
+            relationships: {
+              organizationStatus: {
+                data: { type: 'organization-status-code', id: 'status-active' },
+              },
+            },
+          },
+          { type: 'organization-status-code', id: 'status-active' },
+          { type: 'change-event-type', id: 'type-naamswijziging' },
+        ],
+      });
+      const decision = this.store.createRecord('decision', {
+        documentLinks: ['https://aalst.be/besluiten/2026/124'],
+      });
+      const changeEvent = this.store.createRecord('change-event', {
+        type: nameChange,
+        date: new Date(2026, 9, 1),
+        decision,
+        originalOrganizations: [organization],
+        resultingOrganizations: [organization],
+      });
+      const result = this.store.createRecord('change-event-result', {
+        resultingName: 'Stad Aalst',
+        status,
+        resultingOrganization: organization,
+        resultFrom: changeEvent,
+      });
+      organization.setAbbName('Stad Aalst');
+      waitForAbb(this.fetch, this.adapter);
+
+      await rejection(
+        this.service.submit(
+          'change-event',
+          'org-1',
+          [decision, changeEvent, result, organization],
+          { reason: 'Besluit van de gemeenteraad' },
+        ),
+      );
+
+      assert.deepEqual(postedDocument(this.fetch), {
+        data: {
+          type: 'change-requests',
+          attributes: {
+            aggregate: 'change-event',
+            operations: [
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'publication-date': null,
+                    'document-links': ['https://aalst.be/besluiten/2026/124'],
+                  },
+                  type: 'decisions',
+                  lid: 'lid-1',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    date: '2026-10-01',
+                  },
+                  relationships: {
+                    type: {
+                      data: {
+                        type: 'change-event-types',
+                        id: 'type-naamswijziging',
+                      },
+                    },
+                    'resulting-organizations': {
+                      data: [
+                        {
+                          type: 'administrative-units',
+                          id: 'org-1',
+                        },
+                      ],
+                    },
+                    'original-organizations': {
+                      data: [
+                        {
+                          type: 'administrative-units',
+                          id: 'org-1',
+                        },
+                      ],
+                    },
+                    results: {
+                      data: [
+                        {
+                          type: 'change-event-results',
+                          lid: 'lid-2',
+                        },
+                      ],
+                    },
+                    decision: {
+                      data: {
+                        type: 'decisions',
+                        lid: 'lid-1',
+                      },
+                    },
+                  },
+                  type: 'change-events',
+                  lid: 'lid-3',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'resulting-name': 'Stad Aalst',
+                  },
+                  relationships: {
+                    status: {
+                      data: {
+                        type: 'organization-status-codes',
+                        id: 'status-active',
+                      },
+                    },
+                    'resulting-organization': {
+                      data: {
+                        type: 'administrative-units',
+                        id: 'org-1',
+                      },
+                    },
+                    'result-from': {
+                      data: {
+                        type: 'change-events',
+                        lid: 'lid-3',
+                      },
+                    },
+                  },
+                  type: 'change-event-results',
+                  lid: 'lid-2',
+                },
+              },
+              {
+                op: 'update',
+                data: {
+                  id: 'org-1',
+                  attributes: {
+                    name: 'Stad Aalst',
+                    'legal-name': 'Stad Aalst',
+                    'alternative-name': [],
+                    'expected-end-date': null,
+                  },
+                  relationships: {
+                    'organization-status': {
+                      data: {
+                        type: 'organization-status-codes',
+                        id: 'status-active',
+                      },
+                    },
+                    'changed-by': {
+                      data: [
+                        {
+                          type: 'change-events',
+                          lid: 'lid-3',
+                        },
+                      ],
+                    },
+                    'resulted-from': {
+                      data: [
+                        {
+                          type: 'change-events',
+                          lid: 'lid-3',
+                        },
+                      ],
+                    },
+                  },
+                  type: 'administrative-units',
+                  meta: {
+                    base: {
+                      attributes: {
+                        name: 'Aalst',
+                        'legal-name': 'Aalst',
+                        'alternative-name': [],
+                        'expected-end-date': null,
+                      },
+                      relationships: {
+                        'organization-status': {
+                          data: {
+                            type: 'organization-status-codes',
+                            id: 'status-active',
+                          },
+                        },
+                        'changed-by': {
+                          data: [],
+                        },
+                        'resulted-from': {
+                          data: [],
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+            reason: 'Besluit van de gemeenteraad',
+          },
+          relationships: {
+            target: {
+              data: {
+                type: 'organizations',
+                id: 'org-1',
+              },
+            },
+          },
+        },
+      });
+    });
   });
 
   module('answers without a stored request', function () {

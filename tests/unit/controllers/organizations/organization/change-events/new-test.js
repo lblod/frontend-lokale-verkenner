@@ -45,7 +45,8 @@ module(
           type: 'organization-status-codes',
           id,
           attributes: {
-            label: id === ORGANIZATION_STATUS.INACTIVE ? 'Niet actief' : 'Actief',
+            label:
+              id === ORGANIZATION_STATUS.INACTIVE ? 'Niet actief' : 'Actief',
           },
         },
       }));
@@ -59,7 +60,12 @@ module(
      * The form as the route sets it up: an active gemeente and a new event
      * of the given type.
      */
-    function setupForm(store, controller, typeId, { date = new Date(2026, 9, 1) } = {}) {
+    function setupForm(
+      store,
+      controller,
+      typeId,
+      { date = new Date(2026, 9, 1) } = {},
+    ) {
       const [classification, status, type] = store.push({
         data: [
           {
@@ -110,7 +116,9 @@ module(
     test('it leaves the multi-organisation types out and names the button after who submits', function (assert) {
       const { controller } = this;
       assert.true(controller.excludedTypeIds.includes(CHANGE_EVENT_TYPE.FUSIE));
-      assert.true(controller.excludedTypeIds.includes(CHANGE_EVENT_TYPE.MERGER));
+      assert.true(
+        controller.excludedTypeIds.includes(CHANGE_EVENT_TYPE.MERGER),
+      );
       assert.strictEqual(controller.submitLabel, 'Aanvraag versturen');
 
       this.changeRequests.rights = { canDecide: true, canCreate: [] };
@@ -120,7 +128,12 @@ module(
 
     test('it does not submit without a type and a date, nor a name change without the new name', async function (assert) {
       const { controller } = this;
-      const { changeEvent } = setupForm(this.store, controller, CHANGE_EVENT_TYPE.NAME_CHANGE, { date: null });
+      const { changeEvent } = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.NAME_CHANGE,
+        { date: null },
+      );
       changeEvent.type = null;
 
       await controller.submitRequestTask.perform({ preventDefault() {} });
@@ -129,15 +142,26 @@ module(
       assert.ok(changeEvent.error.type, 'the type is required');
       assert.ok(changeEvent.error.date, 'the date is required');
 
-      const form = setupForm(this.store, controller, CHANGE_EVENT_TYPE.NAME_CHANGE);
+      const form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.NAME_CHANGE,
+      );
       await controller.submitRequestTask.perform({ preventDefault() {} });
       assert.true(this.submit.notCalled);
-      assert.ok(form.changeEvent.error.resultingName, 'the new name is required');
+      assert.ok(
+        form.changeEvent.error.resultingName,
+        'the new name is required',
+      );
     });
 
     test('a naamswijziging submits the event, its result and the renamed organisation as one request about the organisation, and goes to the request when it waits', async function (assert) {
       const { controller } = this;
-      const { organization, changeEvent, decision } = setupForm(this.store, controller, CHANGE_EVENT_TYPE.NAME_CHANGE);
+      const { organization, changeEvent, decision } = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.NAME_CHANGE,
+      );
       controller.resultingName = 'Stad Aalst';
       controller.reason = 'Besluit van de gemeenteraad';
       decision.documentLinks = ['https://aalst.be/besluiten/2026/124', ' '];
@@ -156,60 +180,258 @@ module(
       assert.true(this.submit.calledOnce);
       const [aggregate, target, records, options] = this.submit.firstCall.args;
       assert.strictEqual(aggregate, 'change-event');
-      assert.strictEqual(target, 'org-1', 'the request is about the organisation');
+      assert.strictEqual(
+        target,
+        'org-1',
+        'the request is about the organisation',
+      );
       assert.deepEqual(
         records.map((record) => record.constructor.modelName),
-        ['decision', 'change-event', 'change-event-result', 'administrative-unit'],
+        [
+          'decision',
+          'change-event',
+          'change-event-result',
+          'administrative-unit',
+        ],
       );
       assert.deepEqual(options, { reason: 'Besluit van de gemeenteraad' });
-      assert.deepEqual(decision.documentLinks, ['https://aalst.be/besluiten/2026/124'], 'empty links are dropped');
+      assert.deepEqual(
+        decision.documentLinks,
+        ['https://aalst.be/besluiten/2026/124'],
+        'empty links are dropped',
+      );
       assert.strictEqual((await changeEvent.decision)?.id, decision.id);
       const result = records[2];
       assert.strictEqual(result.resultingName, 'Stad Aalst');
       assert.strictEqual((await result.status)?.id, ORGANIZATION_STATUS.ACTIVE);
       assert.strictEqual((await result.resultingOrganization)?.id, 'org-1');
-      assert.strictEqual(organization.legalName, 'Stad Aalst', 'the organisation carries the new name');
-      assert.deepEqual((await changeEvent.resultingOrganizations).map((o) => o.id), ['org-1']);
+      assert.strictEqual(
+        organization.legalName,
+        'Stad Aalst',
+        'the organisation carries the new name',
+      );
+      assert.deepEqual(
+        (await changeEvent.resultingOrganizations).map((o) => o.id),
+        ['org-1'],
+      );
       assert.true(this.success.calledOnce);
-      assert.true(this.replaceWith.calledOnceWithExactly('aanvragen.aanvraag', REQUEST_ID));
+      assert.true(
+        this.replaceWith.calledOnceWithExactly(
+          'aanvragen.aanvraag',
+          REQUEST_ID,
+        ),
+      );
     });
 
     test('an ontbinding sets the organisation inactive; ABB sees the event at once', async function (assert) {
       const { controller } = this;
       this.changeRequests.rights = { canDecide: true, canCreate: [] };
-      const { organization, changeEvent } = setupForm(this.store, controller, CHANGE_EVENT_TYPE.ONTBONDEN_EN_VEREFFEND);
+      const { organization, changeEvent } = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.ONTBONDEN_EN_VEREFFEND,
+      );
       this.submit.resolves(new Map([[changeEvent, { id: 'event-1' }]]));
 
       await controller.submitRequestTask.perform({ preventDefault() {} });
 
-      assert.strictEqual((await organization.organizationStatus)?.id, ORGANIZATION_STATUS.INACTIVE);
+      assert.strictEqual(
+        (await organization.organizationStatus)?.id,
+        ORGANIZATION_STATUS.INACTIVE,
+      );
       const records = this.submit.firstCall.args[2];
       assert.deepEqual(
         records.map((record) => record.constructor.modelName),
         ['change-event', 'change-event-result', 'administrative-unit'],
         'no decision without links or date',
       );
-      assert.true(this.replaceWith.calledOnceWithExactly('organizations.organization.change-events.details', 'event-1'));
+      assert.true(
+        this.replaceWith.calledOnceWithExactly(
+          'organizations.organization.change-events.details',
+          'event-1',
+        ),
+      );
       assert.true(this.success.notCalled);
     });
 
-    test('a refusal keeps the form and shows the message; cancelling drops the local changes', async function (assert) {
+    test('a refusal keeps the form and shows the message, and puts the organisation back for another attempt; cancelling drops the event', async function (assert) {
       const { controller } = this;
-      const { organization, changeEvent } = setupForm(this.store, controller, CHANGE_EVENT_TYPE.NAME_CHANGE);
+      const { organization, changeEvent } = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.NAME_CHANGE,
+      );
       controller.resultingName = 'Stad Aalst';
-      this.submit.rejects(new ChangeRequestError('Je mag deze organisatie niet bewerken.', { status: 403 }));
+      const sentNames = [];
+      this.submit.callsFake(async () => {
+        sentNames.push(organization.legalName);
+        throw new ChangeRequestError('Je mag deze organisatie niet bewerken.', {
+          status: 403,
+        });
+      });
 
       await controller.submitRequestTask.perform({ preventDefault() {} });
 
-      assert.strictEqual(controller.saveError, 'Je mag deze organisatie niet bewerken.');
+      assert.strictEqual(
+        controller.saveError,
+        'Je mag deze organisatie niet bewerken.',
+      );
+      assert.false(controller.saveBlocked);
       assert.true(this.replaceWith.notCalled);
-      assert.strictEqual(organization.legalName, 'Stad Aalst', 'the local change is still there');
+      assert.strictEqual(
+        controller.resultingName,
+        'Stad Aalst',
+        'the form keeps its values',
+      );
+      assert.strictEqual(
+        organization.legalName,
+        'Aalst',
+        'the organisation is back as it was loaded',
+      );
+      const [, firstResult] = this.submit.firstCall.args[2];
+      assert.strictEqual(
+        firstResult.constructor.modelName,
+        'change-event-result',
+      );
+      assert.true(
+        firstResult.isDestroying,
+        'the result of the attempt is dropped',
+      );
+      assert.deepEqual(
+        (await changeEvent.originalOrganizations).map((o) => o.id),
+        ['org-1'],
+        'the event is still about the organisation',
+      );
+
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+
+      assert.deepEqual(
+        this.submit.secondCall.args[2].map(
+          (record) => record.constructor.modelName,
+        ),
+        ['change-event', 'change-event-result', 'administrative-unit'],
+        'another attempt sends the same',
+      );
+      assert.deepEqual(sentNames, ['Stad Aalst', 'Stad Aalst']);
+      assert.deepEqual(
+        (await changeEvent.resultingOrganizations).map((o) => o.id),
+        [],
+      );
 
       controller.reset();
 
       assert.strictEqual(organization.legalName, 'Aalst', 'rolled back');
       assert.true(changeEvent.isDestroying, 'the new event is dropped');
       assert.strictEqual(controller.saveError, null);
+    });
+
+    test('when the outcome is unknown nothing can be sent until the page is reloaded', async function (assert) {
+      const { controller } = this;
+      const { organization } = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.NAME_CHANGE,
+      );
+      controller.resultingName = 'Stad Aalst';
+      this.submit.rejects(
+        new ChangeRequestError('De wijziging kon niet verwerkt worden.', {
+          status: 502,
+        }),
+      );
+
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+
+      assert.true(this.submit.calledOnce, 'the second attempt sends nothing');
+      assert.true(controller.saveBlocked);
+      assert.true(controller.saveError.includes('Alle aanvragen'));
+      assert.strictEqual(organization.legalName, 'Aalst');
+
+      controller.reset();
+      assert.false(controller.saveBlocked);
+    });
+
+    test("ABB's request that was applied but not followed up goes to the events, one whose apply failed to the request", async function (assert) {
+      const { controller } = this;
+      this.changeRequests.rights = { canDecide: true, canCreate: [] };
+      const warning = sinon.stub(
+        this.owner.lookup('service:toaster'),
+        'warning',
+      );
+      setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.ONTBONDEN_EN_VEREFFEND,
+      );
+      this.submit.rejects(
+        new ChangeRequestError('De wijziging is doorgevoerd, maar ...', {
+          status: 201,
+          applied: true,
+          requestId: REQUEST_ID,
+        }),
+      );
+
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+
+      assert.true(
+        this.replaceWith.calledOnceWithExactly(
+          'organizations.organization.change-events',
+        ),
+      );
+      assert.true(warning.calledOnce);
+
+      this.replaceWith.resetHistory();
+      this.submit.rejects(
+        new ChangeRequestError('Het toepassen mislukte.', {
+          status: 409,
+          applyFailed: true,
+          requestId: REQUEST_ID,
+        }),
+      );
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+
+      assert.true(
+        this.replaceWith.calledOnceWithExactly(
+          'aanvragen.aanvraag',
+          REQUEST_ID,
+        ),
+      );
+    });
+
+    test("ABB's own request that waits over changed data goes to the request with a notice for ABB", async function (assert) {
+      const { controller } = this;
+      this.changeRequests.rights = { canDecide: true, canCreate: [] };
+      const warning = sinon.stub(
+        this.owner.lookup('service:toaster'),
+        'warning',
+      );
+      setupForm(this.store, controller, CHANGE_EVENT_TYPE.NAME_CHANGE);
+      controller.resultingName = 'Stad Aalst';
+      this.submit.rejects(
+        new ChangeRequestError('De aanvraag wacht.', {
+          status: 201,
+          held: true,
+          waiting: true,
+          requestId: REQUEST_ID,
+          conflicts: [
+            {
+              resource: { type: 'administrative-units', id: 'org-1' },
+              key: 'name',
+            },
+          ],
+        }),
+      );
+
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+
+      assert.true(this.success.notCalled, 'not "gevalideerd door ABB"');
+      assert.true(warning.firstCall.args[0].includes('keur de aanvraag goed'));
+      assert.true(
+        this.replaceWith.calledOnceWithExactly(
+          'aanvragen.aanvraag',
+          REQUEST_ID,
+        ),
+      );
     });
   },
 );

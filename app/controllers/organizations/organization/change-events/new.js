@@ -68,6 +68,18 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
    */
   @tracked saveError = null;
 
+  /**
+   * Whether sending is blocked until the page is reloaded: the last attempt
+   * ended without knowing whether the service recorded or applied it (a
+   * 5xx, no answer), and a new one could register the event twice.
+   */
+  @tracked saveBlocked = false;
+
+  /**
+   * The result the last attempt created, unloaded when the page is left.
+   */
+  changeEventResult = null;
+
   isNameChangeType = isNameChangeType;
 
   /**
@@ -124,6 +136,9 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
 
   submitRequestTask = dropTask(async (event) => {
     event.preventDefault();
+    if (this.saveBlocked) {
+      return;
+    }
     this.saveError = null;
 
     const { organization, changeEvent, decision } = this.model;
@@ -210,7 +225,8 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
       resultingOrganization: organization,
       resultFrom: changeEvent,
     });
-    (await changeEvent.resultingOrganizations).push(organization);
+    this.changeEventResult = changeEventResult;
+    changeEvent.resultingOrganizations = [organization];
 
     // The organisation follows the event, unless a later event was recorded
     // already (an event entered after the fact)
@@ -231,9 +247,13 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
       }
     }
 
+    // The besluit, when the type asks for one and it was filled in; set on
+    // every attempt, as the links may have been cleared since the last one
     const records = [];
-    if (changeEvent.requiresDecisionInformation && !decision.isEmpty) {
-      changeEvent.decision = decision;
+    const withDecision =
+      changeEvent.requiresDecisionInformation && !decision.isEmpty;
+    changeEvent.decision = withDecision ? decision : null;
+    if (withDecision) {
       records.push(decision);
     }
     records.push(changeEvent, changeEventResult, organization);
@@ -250,16 +270,53 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
       if (!(error instanceof ChangeRequestError)) {
         throw error;
       }
-      if (error.held && error.waiting && error.requestId) {
-        // Recorded: the request waits for ABB; the organisation is unchanged
-        this.toaster.success(
-          'De aanvraag is verstuurd en wordt gevalideerd door ABB. De gegevens van de organisatie veranderen na goedkeuring.',
-          'Aanvraag verstuurd',
-        );
+      if (error.applied) {
+        // ABB's request is applied, but the page could not follow it up:
+        // the overview loads the events as they are now
+        this.toaster.warning(error.message, 'Wijziging doorgevoerd');
+        this.router.replaceWith('organizations.organization.change-events');
+        return;
+      }
+      if (error.applyFailed && error.requestId) {
+        // ABB's request is kept, but applying it failed: the request page
+        // shows why
+        this.toaster.warning(error.message, 'Doorvoeren mislukt');
         this.router.replaceWith('aanvragen.aanvraag', error.requestId);
         return;
       }
-      this.saveError = error.message;
+      if (error.held && error.waiting && error.requestId) {
+        // Recorded: the request waits; the organisation is unchanged
+        if (this.appliesAtOnce) {
+          // ABB's own request waits when data it changes was changed
+          // meanwhile: ABB reviews the differences on the request page
+          this.toaster.warning(
+            'De veranderingsgebeurtenis is bewaard, maar nog niet doorgevoerd: intussen werden gegevens gewijzigd die ze ook wijzigt. Bekijk de verschillen en keur de aanvraag goed.',
+            'Aanvraag wacht op goedkeuring',
+          );
+        } else {
+          this.toaster.success(
+            'De aanvraag is verstuurd en wordt gevalideerd door ABB. De gegevens van de organisatie veranderen na goedkeuring.',
+            'Aanvraag verstuurd',
+          );
+        }
+        this.router.replaceWith('aanvragen.aanvraag', error.requestId);
+        return;
+      }
+      if (error.held) {
+        // Not recorded, and the records of the form are gone: the page
+        // must be reloaded
+        this.saveError = error.message;
+        this.saveBlocked = true;
+        return;
+      }
+      // Nothing is applied: the organisation goes back to what was loaded,
+      // so that another attempt starts from it. When the outcome is unknown
+      // only a reload tells whether one is needed.
+      this.discardAttempt();
+      this.saveError = error.outcomeUnknown
+        ? OUTCOME_UNKNOWN_MESSAGE
+        : error.message;
+      this.saveBlocked = error.outcomeUnknown;
       return;
     }
 
@@ -289,6 +346,23 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
     );
   }
 
+  /**
+   * Undo what an attempt that was not applied did to the records of the
+   * page, so that a new one starts from the organisation as it was loaded:
+   * the result it created and the fields of the organisation the event
+   * changed. Rolling back the organisation's relationships also takes it
+   * out of the event's organisations (their inverse); the event is about it
+   * all the same.
+   */
+  discardAttempt() {
+    const { organization, changeEvent } = this.model;
+    unloadNew(this.changeEventResult);
+    this.changeEventResult = null;
+    this.changeRequests.rollbackRelationships(organization);
+    organization.rollbackAttributes();
+    changeEvent.originalOrganizations = [organization];
+  }
+
   reset() {
     const { organization, changeEvent, decision } = this.model;
     // The organisation keeps nothing of a request that was not applied
@@ -296,17 +370,32 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
       this.changeRequests.rollbackRelationships(organization);
       organization.rollbackAttributes();
     }
-    for (const record of [changeEvent, decision]) {
-      if (isLoaded(record) && record.isNew) {
-        record.deleteRecord();
-        record.unloadRecord();
-      }
+    for (const record of [changeEvent, decision, this.changeEventResult]) {
+      unloadNew(record);
     }
+    this.changeEventResult = null;
     this.selectedResultingLegalForm = null;
     this.selectedResultingLocations = [];
     this.selectedResultingAdditionalQualifications = [];
     this.resultingName = null;
     this.reason = '';
     this.saveError = null;
+    this.saveBlocked = false;
+  }
+}
+
+/**
+ * The message for an attempt whose outcome is unknown.
+ */
+const OUTCOME_UNKNOWN_MESSAGE =
+  'Het is niet zeker of je aanvraag werd verwerkt. Herlaad de pagina en kijk onder "Alle aanvragen" of ze werd ontvangen voor je ze opnieuw verstuurt.';
+
+/**
+ * Drop a record the page created and nothing saved.
+ */
+function unloadNew(record) {
+  if (isLoaded(record) && record.isNew) {
+    record.deleteRecord();
+    record.unloadRecord();
   }
 }

@@ -26,7 +26,7 @@
             <AuButton
               @loading={{this.submitRequestTask.isRunning}}
               @loadingMessage={{this.submitLabel}}
-              @disabled={{this.submitRequestTask.isRunning}}
+              @disabled={{or this.submitRequestTask.isRunning this.saveBlocked}}
               type="submit"
               data-test-submit-request
             >

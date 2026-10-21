@@ -13,9 +13,10 @@
           <AuButton
             @loading={{this.submitRequestTask.isRunning}}
             @loadingMessage={{this.submitLabel}}
+            @disabled={{or this.submitRequestTask.isRunning this.saveBlocked}}
             type="submit"
             form="organization-creation-form"
-            @icon={{if this.appliesAtOnce "add" "send"}}
+            @icon={{if this.appliesAtOnce "add" "mail"}}
             @iconAlignment="left"
             data-test-submit-request
           >
@@ -288,7 +289,10 @@
             }}
               <Item
                 @labelFor="kbo-identifier"
-                @errorMessage={{@model.identifierKBO.error.structuredIdentifier}}
+                @errorMessage={{or
+                  this.kboConflict
+                  @model.identifierKBO.error.structuredIdentifier
+                }}
                 @required={{true}}
               >
                 <:label>{{@model.identifierKBO.idName}}</:label>
@@ -338,11 +342,26 @@
       </:card>
     </EditCard>
 
-    <EditCard @containsRequiredFields={{false}}>
-      <:title>Besluit tot oprichting</:title>
+    <EditCard @containsRequiredFields={{true}}>
+      <:title>Oprichting</:title>
       <:card as |Card|>
         <Card.Columns>
           <:left as |Item|>
+            <Item
+              @labelFor="change-event-date"
+              @required={{true}}
+              @errorMessage={{@model.changeEvent.error.date.message}}
+            >
+              <:label>Datum oprichting</:label>
+              <:content as |hasError|>
+                <Datepicker
+                  @id="change-event-date"
+                  @value={{@model.changeEvent.date}}
+                  @onChange={{fn (mut @model.changeEvent.date)}}
+                  @error={{hasError}}
+                />
+              </:content>
+            </Item>
             <Item
               @labelFor="change-event-decision-link-0"
               @errorMessage={{@model.decision.error.documentLinks.message}}

@@ -17,32 +17,46 @@
 {{#if @model.pendingRequests.length}}
   <div class="au-o-box au-u-padding-top-none" data-test-pending-requests>
     <AuHeading @level="2" @skin="4" class="au-u-margin-bottom-small">
-      Aanvragen in verwerking
+      Aanvragen
     </AuHeading>
     <AuTable @size="small">
       <:header>
         <tr>
-          <th>Type</th>
+          <th>Type veranderingsgebeurtenis</th>
+          <th>Datum</th>
           <th>Datum aanvraag</th>
           <th>Status aanvraag</th>
           <th></th>
         </tr>
       </:header>
       <:body>
-        {{#each @model.pendingRequests as |request|}}
-          <tr>
+        {{#each @model.pendingRequests as |pending|}}
+          <tr data-test-pending-request>
             <td>
-              Veranderingsgebeurtenis
-              <span class="au-u-muted">
-                (niet beschikbaar: aanvraag in verwerking)
-              </span>
+              {{#if pending.eventType}}
+                {{pending.eventType.label}}
+              {{else}}
+                Veranderingsgebeurtenis
+              {{/if}}
+              {{#if pending.waiting}}
+                <span class="au-u-muted">
+                  (niet beschikbaar: aanvraag in verwerking)
+                </span>
+              {{/if}}
             </td>
-            <td>{{date-format request.attributes.created}}</td>
             <td>
-              <ChangeRequests::Status @status={{request.attributes.status}} />
+              {{#if pending.eventDate}}
+                {{date-format pending.eventDate}}
+              {{/if}}
+            </td>
+            <td>{{date-format pending.request.attributes.created}}</td>
+            <td>
+              <ChangeRequests::Status
+                @status={{pending.request.attributes.status}}
+              />
             </td>
             <td>
-              <AuLink @route="aanvragen.aanvraag" @model={{request.id}}>
+              <AuLink @route="aanvragen.aanvraag" @model={{pending.request.id}}>
                 Bekijk aanvraag
               </AuLink>
             </td>
