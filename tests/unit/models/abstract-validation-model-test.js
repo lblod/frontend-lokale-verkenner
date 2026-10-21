@@ -146,6 +146,79 @@ module('Unit | Model | abstract validation model', function (hooks) {
       assert.strictEqual(model.error, undefined);
     });
   });
+
+  module('reset', function () {
+    test('it rolls back the relationships of a persisted record along with its attributes', async function (assert) {
+      this.owner.register('model:test-validation-model', BasicValidationModel);
+      this.owner.register(
+        'model:test-belongs-to-model',
+        BelongsToValidationModel,
+      );
+      this.owner.register('model:test-has-many-model', HasManyValidationModel);
+      const store = this.store();
+      const [first, second] = store.push({
+        data: [
+          {
+            type: 'test-validation-model',
+            id: 'first',
+            attributes: { name: 'first' },
+          },
+          {
+            type: 'test-validation-model',
+            id: 'second',
+            attributes: { name: 'second' },
+          },
+        ],
+      });
+      const one = store.push({
+        data: {
+          type: 'test-belongs-to-model',
+          id: 'one',
+          relationships: {
+            oneRequired: {
+              data: { type: 'test-validation-model', id: 'first' },
+            },
+          },
+        },
+      });
+      const many = store.push({
+        data: {
+          type: 'test-has-many-model',
+          id: 'many',
+          relationships: {
+            manyRequired: {
+              data: [{ type: 'test-validation-model', id: 'first' }],
+            },
+          },
+        },
+      });
+      one.oneRequired = second;
+      many.manyRequired = [second];
+      first.name = 'changed';
+
+      one.reset();
+      many.reset();
+      first.reset();
+
+      assert.strictEqual((await one.oneRequired).id, 'first');
+      assert.deepEqual(
+        (await many.manyRequired).map((record) => record.id),
+        ['first'],
+      );
+      assert.strictEqual(first.name, 'first');
+    });
+
+    test('it unloads a new record', function (assert) {
+      this.owner.register('model:test-validation-model', BasicValidationModel);
+      const model = this.store().createRecord('test-validation-model', {
+        name: 'new',
+      });
+
+      model.reset();
+
+      assert.true(model.isDestroying, 'unloaded');
+    });
+  });
 });
 
 class BasicValidationModel extends AbstractValidationModel {
