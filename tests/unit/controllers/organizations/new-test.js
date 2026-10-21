@@ -37,9 +37,7 @@ module('Unit | Controller | organizations/new', function (hooks) {
     this.success = sinon.stub(this.owner.lookup('service:toaster'), 'success');
     // The contact data of a new organisation is edited here when the flag is
     // on, as in development; without it the contact card is a notice
-    this.owner
-      .lookup('service:features')
-      .setup({ 'edit-contact-data': true, 'legal-form-editable': true });
+    this.owner.lookup('service:features').setup({ 'edit-contact-data': true });
     // The KBO uniqueness check of the identifier model queries the backend
     sinon
       .stub(this.owner.lookup('adapter:application'), 'query')

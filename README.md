@@ -242,7 +242,8 @@ KBO number that is registered or requested already is shown on the field.
 An applied request the page cannot follow up, or whose apply failed, goes to
 the request page; when the outcome is unknown (a 5xx, no answer) the form
 blocks a new attempt until the page is reloaded, since it could register the
-organisation twice. The werkingsgebied comes from the scope-of-operation
+organisation twice; a browser that knows it is offline sent nothing, so that
+attempt can be repeated. The werkingsgebied comes from the scope-of-operation
 service, as in OP (the stack runs it). The related organisations of the new
 one (its founder) are not part of the request yet.
 
