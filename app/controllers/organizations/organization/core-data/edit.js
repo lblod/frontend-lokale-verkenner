@@ -6,8 +6,10 @@ import { action } from '@ember/object';
 import { setEmptyStringsToNull } from 'frontend-organization-portal/utils/empty-string-to-null';
 import isContactEditableOrganization from 'frontend-organization-portal/utils/editable-contact-data';
 import { tracked } from '@glimmer/tracking';
-import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
-import { ScopeOfOperationError } from 'frontend-organization-portal/services/scope-of-operation';
+import {
+  ChangeRequestError,
+  kboConflictMessage,
+} from 'frontend-organization-portal/services/change-requests';
 import {
   hasUserInput,
   isLoaded,
@@ -24,24 +26,31 @@ import {
 import { ID_NAME } from 'frontend-organization-portal/models/identifier';
 import requiresKbo from '../../../../helpers/requires-kbo';
 
+/**
+ * The fields of the organisation that change only through a
+ * veranderingsgebeurtenis: the page shows them, and the change-request
+ * service refuses a kerngegevens request that changes them.
+ */
+const CHANGE_EVENT_KEYS = ['legalForm', 'scope', 'additionalQualifications'];
+
 export default class OrganizationsOrganizationCoreDataEditController extends Controller {
   @service router;
   @service store;
   @service features;
-  @service scopeOfOperation;
   @service changeRequests;
   @service toaster;
 
   /**
-   * The locations of the organisation's werkingsgebied as the route loaded
-   * them and the user edited them. Null when they could not be loaded: the
-   * werkingsgebied is then left as it is on save, see `scopeNotLoaded`.
-   */
-  @tracked locationsInScope;
-  /**
    * The message of the change-request service when it refused the last save.
    */
   @tracked saveError;
+  /**
+   * Set when the service refused the KBO number because another
+   * organisation, or a creation that waits, has it: `{ message }`, shown on
+   * the field. It is not a validation error of the form, which would say a
+   * required field is empty.
+   */
+  @tracked kboConflict = null;
   /**
    * Whether saving is blocked until the page is reloaded: the last save
    * ended without knowing whether the change was applied (a 5xx), and a
@@ -63,7 +72,7 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
    * status mislukt). The service kept it, and the apply may have stopped
    * half-way, leaving the fields it changes empty; a new save would start
    * from the values the page loaded and conflict with that. Saving is
-   * blocked, `reapply` applies the kept request again.
+   * blocked until the page is reloaded.
    */
   @tracked failedRequestId = null;
   /**
@@ -84,14 +93,6 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
         this.model.identifierKBO?.error) ||
       this.model.identifierSharepoint.error
     );
-  }
-
-  /**
-   * Whether the locations of the werkingsgebied could not be loaded, in
-   * which case the field is shown disabled and the werkingsgebied is kept.
-   */
-  get scopeNotLoaded() {
-    return this.locationsInScope === null;
   }
 
   get vendorsString() {
@@ -116,6 +117,7 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
   setKbo(event) {
     this.model.structuredIdentifierKBO.localId =
       event.target.inputmask.unmaskedvalue();
+    this.kboConflict = null;
   }
 
   save = dropTask(async (event) => {
@@ -124,6 +126,7 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
       return;
     }
     this.saveError = null;
+    this.kboConflict = null;
     this.heldRequest = null;
 
     let {
@@ -137,34 +140,16 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
       structuredIdentifierKBO,
     } = this.model;
 
-    // NOTE (05/06/2025): Explicitly set the scope to `undefined` when the user
-    // did not select any locations, or removed all originally set
-    // locations. Otherwise, any edits are ignored and the previously set scope
-    // of operation is just silently kept.
-    // When the locations could not be loaded (`locationsInScope` is null)
-    // the werkingsgebied is not touched: an empty selection then means
-    // "unknown", not "cleared by the user".
-    if (this.locationsInScope !== null) {
-      try {
-        organization.scope =
-          this.locationsInScope?.length > 0
-            ? await this.scopeOfOperation.getScopeForLocations(
-                ...this.locationsInScope,
-              )
-            : undefined;
-      } catch (error) {
-        if (error instanceof ScopeOfOperationError) {
-          this.saveError = error.message;
-          return;
-        }
-        throw error;
-      }
-    }
-
+    // The juridische vorm, the werkingsgebied and the qualifications change
+    // through a veranderingsgebeurtenis only: the request carries them as
+    // they are, and a value the data lacks is not this page's to fill in.
     await Promise.all([
       organization.validate({ relaxMandatoryFoundingOrganization: true }),
       identifierSharepoint.validate(),
     ]);
+    for (const key of CHANGE_EVENT_KEYS) {
+      organization.removeError(key);
+    }
 
     const requiresKboNumber = requiresKbo(organization);
 
@@ -255,6 +240,12 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
 
       records.push(setEmptyStringsToNull(organization));
 
+      // Nothing changed: no request, the page is left as after a save
+      if (!this.changeRequests.hasChanges(records)) {
+        this.leave(organization.id);
+        return;
+      }
+
       let saved;
       try {
         saved = await this.changeRequests.submit(
@@ -281,9 +272,17 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
           );
           return;
         }
+        const kboMessage = kboConflictMessage(error.errors);
+        if (kboMessage) {
+          // Another organisation has the number: shown on the field
+          this.kboConflict = { message: kboMessage };
+          this.saveError =
+            'De wijziging werd niet opgeslagen. Controleer het KBO-nummer.';
+          return;
+        }
         // The records keep their edits so the user can correct and retry,
         // unless the outcome is unknown, a retry could apply the change
-        // twice, or the apply failed, which `reapply` retries.
+        // twice, or the apply failed: saving stays blocked.
         this.saveError = error.message;
         this.saveBlocked = error.outcomeUnknown || error.applyFailed;
         this.failedRequestId = error.applyFailed ? error.requestId : null;
@@ -296,42 +295,6 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
 
       this.leave(organization.id);
     }
-  });
-
-  /**
-   * Apply the request whose apply failed on the last save again (a
-   * hertoepassing of what was submitted, see `failedRequestId`). Once it is
-   * applied the page is left, as after a save. Unless the service refuses
-   * it, it can be tried again; a refusal needs a reload.
-   */
-  reapply = dropTask(async () => {
-    const { organization, structuredIdentifierKBO } = this.model;
-    this.saveError = null;
-
-    try {
-      await this.changeRequests.reapply(this.failedRequestId);
-    } catch (error) {
-      if (!(error instanceof ChangeRequestError)) {
-        throw error;
-      }
-      this.saveError = error.message;
-      if (error.refused) {
-        // Not to be tried again: the page must be reloaded
-        this.failedRequestId = null;
-      }
-      return;
-    }
-
-    // A KBO number the request created has an id the page does not know,
-    // as after an `applied` error; it is synced on the next save.
-    if (requiresKbo(organization) && !structuredIdentifierKBO.isNew) {
-      await this.syncKboData(structuredIdentifierKBO.id);
-    }
-    this.toaster.success(
-      'De wijziging is doorgevoerd.',
-      'Wijziging doorgevoerd',
-    );
-    this.leave(organization.id);
   });
 
   /**
@@ -440,8 +403,8 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
 
   reset() {
     this.resetUnsavedRecords();
-    this.locationsInScope = [];
     this.saveError = null;
+    this.kboConflict = null;
     this.saveBlocked = false;
     this.heldRequest = null;
     this.failedRequestId = null;

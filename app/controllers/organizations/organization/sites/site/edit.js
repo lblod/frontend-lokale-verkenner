@@ -52,7 +52,7 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
    * status mislukt). The service kept it, and the apply may have stopped
    * half-way, leaving the fields it changes empty; a new save would start
    * from the values the page loaded and conflict with that. Saving is
-   * blocked, `reapply` applies the kept request again.
+   * blocked until the page is reloaded.
    */
   @tracked failedRequestId = null;
   /**
@@ -173,6 +173,15 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
         records.push(organization);
       }
 
+      // Nothing changed: no request, the page is left as after a save
+      if (!this.changeRequests.hasChanges(records)) {
+        this.router.transitionTo(
+          'organizations.organization.sites.site',
+          site.id,
+        );
+        return;
+      }
+
       try {
         await this.changeRequests.submit('site', organization.id, records);
       } catch (error) {
@@ -201,7 +210,7 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
         }
         // The records keep their edits so the user can correct and retry,
         // unless the outcome is unknown, a retry could apply the change
-        // twice, or the apply failed, which `reapply` retries.
+        // twice, or the apply failed: saving stays blocked.
         this.saveError = error.message;
         this.saveBlocked = error.outcomeUnknown || error.applyFailed;
         this.failedRequestId = error.applyFailed ? error.requestId : null;
@@ -213,40 +222,6 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
         site.id,
       );
     }
-  });
-
-  /**
-   * Apply the request whose apply failed on the last save again (a
-   * hertoepassing of what was submitted, see `failedRequestId`). Once it is
-   * applied the page is left, as after a save. Unless the service refuses
-   * it, it can be tried again; a refusal needs a reload.
-   */
-  reapply = dropTask(async () => {
-    const { site } = this.model;
-    this.saveError = null;
-
-    try {
-      await this.changeRequests.reapply(this.failedRequestId);
-    } catch (error) {
-      if (!(error instanceof ChangeRequestError)) {
-        throw error;
-      }
-      this.saveError = error.message;
-      if (error.refused) {
-        // Not to be tried again: the page must be reloaded
-        this.failedRequestId = null;
-      }
-      return;
-    }
-
-    // The records still hold the edits; the page of the site loads the
-    // applied state.
-    this.toaster.success(
-      'De wijziging is doorgevoerd.',
-      'Wijziging doorgevoerd',
-    );
-    this.router.refresh();
-    this.router.transitionTo('organizations.organization.sites.site', site.id);
   });
 
   /**

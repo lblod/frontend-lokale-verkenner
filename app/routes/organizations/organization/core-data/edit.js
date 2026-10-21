@@ -17,12 +17,6 @@ export default class OrganizationsOrganizationCoreDataEditRoute extends Route {
   @service router;
   @service scopeOfOperation;
 
-  /**
-   * The locations of the organisation's werkingsgebied, null when they could
-   * not be loaded (the werkingsgebied is then left as it is on save).
-   */
-  locationsInScope = [];
-
   beforeModel() {
     // The organisation of the transition, which may differ from the one on
     // screen when the page is opened from elsewhere.
@@ -102,8 +96,9 @@ export default class OrganizationsOrganizationCoreDataEditRoute extends Route {
     const regions =
       await this.scopeOfOperation.getReferentieregiosInScope(organization);
 
-    this.locationsInScope =
-      await this.scopeOfOperation.getLocationsInScope(organization);
+    // The werkingsgebied is shown, not edited: it changes through a
+    // veranderingsgebeurtenis
+    const scopeLabel = await this.scopeOfOperation.getScopeLabel(organization);
 
     const vendors = await organization.vendors;
 
@@ -121,6 +116,7 @@ export default class OrganizationsOrganizationCoreDataEditRoute extends Route {
       structuredIdentifierNIS,
       structuredIdentifierOVO,
       regions,
+      scopeLabel,
       vendors,
     };
   }
@@ -153,11 +149,5 @@ export default class OrganizationsOrganizationCoreDataEditRoute extends Route {
 
       return missingIdentifiers;
     }, []);
-  }
-
-  setupController(controller) {
-    super.setupController(...arguments);
-
-    controller.set('locationsInScope', this.locationsInScope);
   }
 }

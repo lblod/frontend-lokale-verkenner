@@ -148,8 +148,7 @@ A page is switched by replacing its chain of `saveRecord` calls with one
 including a held request (refresh the route that loads the page's records,
 build the form again and show `Error::ChangeRequestHeld` with the page's
 labels for the fields, see [Held requests](#held-requests)) and a failed
-apply (block saving and offer `reapply`, see
-[Failed applies](#failed-applies)).
+apply (block saving, see [Failed applies](#failed-applies)).
 
 ### The `change-requests` service
 
@@ -169,23 +168,31 @@ apply (block saving and offer `reapply`, see
   serializer leaves out every new record (the kerngegevens page keeps
   placeholder identifiers in `organization.identifiers` that it does not
   submit). Every update carries the values the record was loaded with as its
-  base (see [Base values](#base-values)). On `201` with status `goedgekeurd`
+  base (see [Base values](#base-values)). On `201` with status `afgehandeld`
   the service answers with the uuids it minted for the `lid`s; the local
   changes are discarded, the client-side new records are unloaded and every
   record is reloaded from the backend. `submit` returns a `Map` from each
   submitted record to its reloaded record (a fresh record for the new ones).
-  On `201` with status `ingediend` the request is held, see
-  [Held requests](#held-requests).
+  A request that changes nothing the service holds is stored by nothing:
+  `200` with `{ "data": null, "meta": { "unchanged": true } }`, after which
+  the records are reloaded as after an applied request. On `201` with status
+  `ingediend` the request is held, see [Held requests](#held-requests).
+- `hasChanges(records)` tells whether `submit` would change anything: a new
+  or deleted record does, an update only when a key it carries differs from
+  its base (lists compare as sets). The kerngegevens and vestiging pages
+  leave without a request when nothing changed.
 - A failed `submit` rejects with a `ChangeRequestError` whose `message` is
   for the user (from the JSON:API `errors` array when there is one). Its flags
   say what the page does with its edits:
-  - no flag: the service refused (`4xx`) or the request never left; nothing is
-    touched, the page keeps its edits and shows the message for a correction
-    and a retry;
-  - `outcomeUnknown` (a `5xx`): the service may have applied the request
-    before the dispatcher or the service gave up; the page shows the message
-    and blocks the save button until it is reloaded, since a retry could apply
-    the change twice;
+  - no flag: the service refused (`4xx`); nothing is touched, the page keeps
+    its edits and shows the message for a correction and a retry. A KBO
+    number another organisation has, or a creation that waits proposes, is
+    a `409` with `meta["kbo-number"]` (`kboConflictMessage`): the creation
+    and kerngegevens forms show it on the KBO field;
+  - `outcomeUnknown` (a `5xx`, no answer at all, or a `2xx` whose body cannot
+    be read): the service may have applied or recorded the request; the page
+    shows the message and blocks the save button until it is reloaded, since
+    a retry could apply the change twice;
   - `applied` (the service answered `2xx` but the answer lacks a minted id or
     a reload failed): the change is in the application graph; the page leaves
     with a warning toast, the index page loads the applied state;
@@ -196,12 +203,11 @@ apply (block saving and offer `reapply`, see
     `reloadFailed` is set when it could not reload the records afterwards;
   - `applyFailed` (a `409` whose `meta["change-request"]` has status
     `mislukt`): the service kept the request (`requestId`) but its apply
-    failed; the page keeps its edits, blocks the save button and offers to
-    apply the kept request again, see [Failed applies](#failed-applies).
+    failed; the page keeps its edits, blocks the save button and links to
+    the kept request, see [Failed applies](#failed-applies).
 - `withdraw(requestId)` withdraws a held request (an `intrekking` step,
-  `POST /change-requests/:id/steps`), `reapply(requestId)` applies a request
-  whose apply failed again (a `hertoepassing` step). Both reject with a
-  `ChangeRequestError` whose message says why not, in Dutch.
+  `POST /change-requests/:id/steps`). It rejects with a `ChangeRequestError`
+  whose message says why not, in Dutch.
 - `permissions(targetId)` asks `GET /change-requests/permissions?target=…`
   whether the session may edit an organisation and returns
   `{ canEdit, rules }`, `rules` being the names of the policy rules that
@@ -318,8 +324,16 @@ form (`1770`, `""`), so that the service finds the value it holds. Every key
 an update carries has a base: the attributes come with the record, the
 serializer only sends a relationship the store has loaded or the page has
 set, and the pages load a relationship before they change it, so its remote
-state is the value on the server when the page was opened. Creates and
-deletes carry no base.
+state is the value on the server when the page was opened. That last part is
+checked: mu-cl-resources sends a relationship that was not included as a
+link, which the store reads as nothing (or as empty, for a synchronous one
+such as `additionalQualifications`), so the application serializer notes
+which relationships of a record came as a link only and the application
+adapter which ones were loaded through their link since
+(`relationshipLoaded`). A relationship without inverse that the page changed
+but never loaded makes `submit` throw before anything is sent (the
+change-event route therefore loads the fields an event may change). Creates
+and deletes carry no base.
 
 The service compares, per single-valued key (an attribute that is not a set,
 a to-one relationship), the proposed value `P`, the base `B` and the current
@@ -364,16 +378,15 @@ yet). For the frontend this is neither a success nor a refusal:
   records.
 - The page then shows `Error::ChangeRequestHeld`: a warning that the change
   was not applied because someone else changed the same data in the
-  meantime, naming the fields, that the request waits for a decision by ABB,
-  and that saving the same fields again replaces it: the service then
-  withdraws the held request itself (saving only part of them leaves it
-  waiting next to the new change); a button withdraws the held request
-  (`withdraw`). When a save replaced earlier requests, the service lists them
-  in `superseded` and `submit` shows a toast saying they were withdrawn. The
-  names are the page's labels for the key of the
-  record in conflict, from `app/utils/change-request-conflicts.js` (the key
-  itself when there is no label). Refreshing resets the controller, so the
-  notice is set afterwards.
+  meantime, naming the fields; the form shows the current values and the
+  user enters the change again. (The notice still has a part for a request
+  that waits for ABB, with a button that withdraws it, from when an edit
+  could wait; no edit page reaches it any more.) When a save replaced earlier
+  requests, the service lists them in `superseded` and `submit` shows a toast
+  saying they were withdrawn. The names are the page's labels for the key of
+  the record in conflict, from `app/utils/change-request-conflicts.js` (the
+  key itself when there is no label). Refreshing resets the controller, so
+  the notice is set afterwards.
 - A new save is a new request, whose base is what the form now shows, and
   the service checks it against the current values again. On the page of a
   new vestiging a held request means that the site was not created; the
@@ -382,7 +395,7 @@ yet). For the frontend this is neither a success nor a refusal:
   logged), the store holds the values the page loaded, not the current ones:
   the notice asks for a reload and saving is blocked. When the refresh itself
   fails, the router shows the error page; a warning toast then says that the
-  request waits for ABB.
+  change was not applied.
 
 ### Failed applies
 
@@ -391,14 +404,11 @@ transaction: when it fails twice it keeps the request with status
 `mislukt`, and the apply may have stopped half-way, leaving the keys it
 changes empty on the organisation. It answers `409` with
 `meta["change-request"]` (`{ id, status: "mislukt" }`). A new save would
-start from the values the page loaded, find the emptied keys and be held as
-a conflict, so the page keeps its edits, blocks the save button and shows an
-"Opnieuw toepassen" button that applies the kept request again (`reapply`, a
-`hertoepassing` step). Once it is applied the page is left as after a save.
-When it fails again, with a `5xx` or without reaching the service, it can be
-tried again (the service does not apply a request twice); when the service
-refuses it (`refused`), e.g. because another request on the organisation was
-applied after it failed, the page asks for a reload.
+start from the values the page loaded, find the emptied keys and be refused
+as a conflict, so the page keeps its edits and blocks the save button until
+it is reloaded. Applying the kept request again (a `hertoepassing` step) is
+not in the designs, so the pages do not offer it; the service keeps the step
+for API use.
 
 ### Aggregates
 
@@ -419,11 +429,16 @@ of a contact point); otherwise every save would create an empty contact point
 or identifier and change `contacts` or `identifiers`, lists nobody edited, so
 that a save of the kerngegevens without changes would still write.
 
-The werkingsgebied of the kerngegevens page is resolved through the
-`scope-of-operation` service (`app/services/scope-of-operation.js`) before the
-request is built. When that service does not answer, the field is disabled
-and the werkingsgebied is left as it is; when the lookup of a changed
-werkingsgebied fails, the save stops with a message and nothing is sent.
+The kerngegevens page shows the juridische vorm, the werkingsgebied (its
+label from the `scope-of-operation` service) and the bijkomende
+kwalificaties without changing them: the service refuses a change to them
+through `organization-core-data` or `site`, so they change through a
+veranderingsgebeurtenis, to which the page links. The organisation is sent
+with them unchanged, and a value the data lacks does not block the save. The
+creation and change-event forms resolve a werkingsgebied through the
+`scope-of-operation` service (`app/services/scope-of-operation.js`) before
+the request is built; when that lookup fails, the save stops with a message
+and nothing is sent.
 
 ### Contract points for the change-request service
 
@@ -441,11 +456,12 @@ with the service:
   After a `5xx` the frontend blocks a retry until the page is reloaded; the
   service may use the `lid` as an idempotency key (reject or reuse a `lid` it
   already minted) so that a retry can never duplicate a create.
-- The werkingsgebied (`scope`, type `locations`) is not a member of the
-  `organization-core-data` aggregate, so the service leaves it as it is on the
-  master; the kerngegevens page can only change it once the aggregate admits
-  it and the `scope-of-operation` service, which mints locations outside the
-  change-request policy, is part of the stack.
+- Per aggregate the service lets the organisation change only some keys:
+  through `organization-core-data` its names, purpose, expected end date,
+  themes, identifiers and sites; through `site` its sites; through
+  `change-event` its names, status, legal form, werkingsgebied and
+  qualifications. Any other key the frontend sends unchanged; a changed one
+  is a `422` whose `source.pointer` names it.
 - `meta.base` of an update carries, for every key the operation carries, the
   loaded value in the serialisation of the proposal (see
   [Base values](#base-values)), relationships included.

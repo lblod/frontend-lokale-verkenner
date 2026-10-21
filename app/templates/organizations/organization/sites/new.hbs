@@ -14,11 +14,7 @@
             <AuButton
               @loading={{this.createSiteTask.isRunning}}
               @loadingMessage="Voeg toe"
-              @disabled={{or
-                this.createSiteTask.isRunning
-                this.reapply.isRunning
-                this.saveBlocked
-              }}
+              @disabled={{or this.createSiteTask.isRunning this.saveBlocked}}
               @icon="add"
               @iconAlignment="left"
               type="submit"
@@ -29,17 +25,6 @@
           </AuButtonGroup>
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
           <Error::ChangeRequest @message={{this.saveError}} />
-          {{#if this.failedRequestId}}
-            <AuButton
-              @skin="link"
-              @loading={{this.reapply.isRunning}}
-              @loadingMessage="Opnieuw toepassen"
-              data-test-reapply
-              {{on "click" (perform this.reapply)}}
-            >
-              Opnieuw toepassen
-            </AuButton>
-          {{/if}}
         </div>
       </:action>
     </PageHeader>

@@ -41,8 +41,8 @@ export default class OrganizationsOrganizationSitesNewController extends Control
   @tracked heldRequest = null;
   /**
    * The uuid of the request whose apply failed on the last save (a 409 with
-   * status mislukt). The service kept it; saving is blocked, `reapply`
-   * applies the kept request again.
+   * status mislukt). The service kept it; saving is blocked until the
+   * page is reloaded.
    */
   @tracked failedRequestId = null;
   /**
@@ -143,7 +143,7 @@ export default class OrganizationsOrganizationSitesNewController extends Control
         }
         // The records keep their edits so the user can correct and retry,
         // unless the outcome is unknown, a retry could create the site
-        // twice, or the apply failed, which `reapply` retries.
+        // twice, or the apply failed: saving stays blocked.
         this.saveError = error.message;
         this.saveBlocked = error.outcomeUnknown || error.applyFailed;
         this.failedRequestId = error.applyFailed ? error.requestId : null;
@@ -155,42 +155,6 @@ export default class OrganizationsOrganizationSitesNewController extends Control
         saved.get(site).id,
       );
     }
-  });
-
-  /**
-   * Apply the request whose apply failed on the last save again (a
-   * hertoepassing of what was submitted, see `failedRequestId`). Once it is
-   * applied the list of sites is opened: the uuid the service minted for the
-   * site is in the answer to the submit only. Unless the service refuses
-   * it, it can be tried again; a refusal needs a reload.
-   */
-  reapply = dropTask(async () => {
-    const { organization } = this.model;
-    this.saveError = null;
-
-    try {
-      await this.changeRequests.reapply(this.failedRequestId);
-    } catch (error) {
-      if (!(error instanceof ChangeRequestError)) {
-        throw error;
-      }
-      this.saveError = error.message;
-      if (error.refused) {
-        // Not to be tried again: the page must be reloaded
-        this.failedRequestId = null;
-      }
-      return;
-    }
-
-    this.toaster.success(
-      'De vestiging is toegevoegd.',
-      'Wijziging doorgevoerd',
-    );
-    this.router.refresh();
-    this.router.replaceWith(
-      'organizations.organization.sites',
-      organization.id,
-    );
   });
 
   /**

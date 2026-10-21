@@ -20,6 +20,13 @@ export default class ApplicationSerializer extends JSONAPISerializer.extend(
    */
   #loadedForms = new Map();
 
+  /**
+   * Per record (`modelName:id`), by relationship name, whether the backend
+   * sent the value of the relationship (`loaded`), or only a link to it and
+   * never its value since (`linked`). See `relationshipLoaded`.
+   */
+  #relationshipLoads = new Map();
+
   serializeAttribute(snapshot, json, key, attributes) {
     if (key !== 'uri')
       super.serializeAttribute(snapshot, json, key, attributes);
@@ -28,7 +35,68 @@ export default class ApplicationSerializer extends JSONAPISerializer.extend(
   normalize(modelClass, resourceHash) {
     const normalized = super.normalize(modelClass, resourceHash);
     this.#keepLoadedForms(modelClass, resourceHash, normalized.data);
+    this.#keepRelationshipLoads(modelClass, resourceHash, normalized.data);
     return normalized;
+  }
+
+  /**
+   * Whether the value of a relationship of a record was loaded from the
+   * backend. False only for a relationship the backend sent as a link
+   * (mu-cl-resources sends the value of an included relationship only) and
+   * that was not loaded since, neither in another document of the record
+   * nor through the link (`relationshipFetched`): the store reads such a
+   * relationship as empty, so a change request that changes it would start
+   * from a value the server does not have. True for a record this
+   * serializer did not load: one the page created.
+   *
+   * @param {string} modelName
+   * @param {string} id
+   * @param {string} name - the relationship's name on the model
+   * @returns {boolean}
+   */
+  relationshipLoaded(modelName, id, name) {
+    const loads = this.#relationshipLoads.get(`${modelName}:${id}`);
+    return loads?.get(name) !== 'linked';
+  }
+
+  /**
+   * Note that the value of a relationship of a record was loaded through its
+   * link, as the application adapter does once it followed one.
+   *
+   * @param {string} modelName
+   * @param {string} id
+   * @param {string} name - the relationship's name on the model
+   */
+  relationshipFetched(modelName, id, name) {
+    this.#relationshipLoadsOf(`${modelName}:${id}`).set(name, 'loaded');
+  }
+
+  #keepRelationshipLoads(modelClass, resourceHash, data) {
+    if (!data?.id || !resourceHash.relationships) {
+      return;
+    }
+    const loads = this.#relationshipLoadsOf(`${data.type}:${data.id}`);
+    modelClass.eachRelationship((name, descriptor) => {
+      const payload =
+        resourceHash.relationships[
+          this.keyForRelationship(name, descriptor.kind, 'deserialize')
+        ];
+      if (payload?.data !== undefined) {
+        loads.set(name, 'loaded');
+      } else if (payload && loads.get(name) !== 'loaded') {
+        // A link only: the store keeps the value it loaded before, if any
+        loads.set(name, 'linked');
+      }
+    });
+  }
+
+  #relationshipLoadsOf(key) {
+    let loads = this.#relationshipLoads.get(key);
+    if (!loads) {
+      loads = new Map();
+      this.#relationshipLoads.set(key, loads);
+    }
+    return loads;
   }
 
   /**

@@ -37,6 +37,18 @@ function deferred() {
   return { promise, resolve };
 }
 
+/**
+ * The error a promise rejects with, or null when it resolves.
+ */
+async function rejection(promise) {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  return null;
+}
+
 module('Unit | Service | change-requests', function (hooks) {
   setupTest(hooks);
 
@@ -1182,6 +1194,10 @@ module('Unit | Service | change-requests', function (hooks) {
         ),
         'a message in Dutch instead of the detail of the service',
       );
+      assert.false(
+        error.message.includes('opnieuw toe'),
+        'the pages do not offer to apply it again',
+      );
       assert.true(organization.hasDirtyAttributes, 'the edits are kept');
       assert.strictEqual(organization.name, 'Stad Test');
     });
@@ -1232,15 +1248,6 @@ module('Unit | Service | change-requests', function (hooks) {
           },
         ],
       });
-    }
-
-    async function rejection(promise) {
-      try {
-        await promise;
-      } catch (error) {
-        return error;
-      }
-      return null;
     }
 
     test('withdraw takes an intrekking step on the request', async function (assert) {
@@ -1299,69 +1306,6 @@ module('Unit | Service | change-requests', function (hooks) {
       error = await rejection(this.service.withdraw(REQUEST_ID));
       assert.true(error instanceof ChangeRequestError);
       assert.true(error.message.startsWith('De intrekking kon niet verstuurd'));
-    });
-
-    test('reapply takes a hertoepassing step on the request', async function (assert) {
-      this.fetch.resolves(
-        jsonResponse(201, {
-          data: {
-            type: 'change-requests',
-            id: REQUEST_ID,
-            attributes: { status: 'afgehandeld' },
-          },
-        }),
-      );
-
-      await this.service.reapply(REQUEST_ID);
-
-      const { url, document } = stepOf(this.fetch);
-      assert.strictEqual(url, `/change-requests/${REQUEST_ID}/steps`);
-      assert.deepEqual(document.data.attributes, {
-        'step-type': 'hertoepassing',
-      });
-    });
-
-    test('reapply tells a request that failed again or did not get through from one the service refuses', async function (assert) {
-      this.fetch.resolves(
-        stepError(409, {
-          'change-request': { id: REQUEST_ID, status: 'mislukt' },
-        }),
-      );
-      let error = await rejection(this.service.reapply(REQUEST_ID));
-      assert.true(error.applyFailed, 'failed once more: it can be tried again');
-      assert.false(error.refused);
-      assert.strictEqual(error.requestId, REQUEST_ID);
-
-      this.fetch.resolves(new Response('Bad Gateway', { status: 502 }));
-      error = await rejection(this.service.reapply(REQUEST_ID));
-      assert.true(error.outcomeUnknown, 'a 5xx: it can be tried again');
-      assert.false(error.refused);
-
-      this.fetch.resolves(
-        stepError(409, { status: 'afgehandeld', 'step-type': 'hertoepassing' }),
-      );
-      assert.strictEqual(
-        await this.service.reapply(REQUEST_ID),
-        undefined,
-        'applied meanwhile, e.g. from another tab: resolves',
-      );
-
-      this.fetch.resolves(
-        stepError(409, {
-          'change-request': {
-            id: '47b4a8ba-1229-409e-a326-ac4250defec4',
-            status: 'afgehandeld',
-          },
-        }),
-      );
-      error = await rejection(this.service.reapply(REQUEST_ID));
-      assert.true(error.refused, 'refused: the page must be reloaded');
-      assert.false(error.applyFailed);
-      assert.false(error.outcomeUnknown);
-      assert.strictEqual(
-        error.message,
-        'Intussen werd een andere wijziging van deze organisatie doorgevoerd, daarom wordt je aanvraag niet meer toegepast. Herlaad de pagina en voer je wijziging opnieuw in.',
-      );
     });
   });
 
@@ -1514,6 +1458,692 @@ module('Unit | Service | change-requests', function (hooks) {
       assert.false(
         this.service.canEditOrganization('org-a'),
         'the answer to the earlier request is dropped',
+      );
+    });
+  });
+
+  /**
+   * The request bodies `submit` sends, one per aggregate, as the pages build
+   * their records: every operation with its keys, its base and its links, so
+   * that a change in the serialisation (a serializer that goes missing, a
+   * key that is no longer written) shows here. The lids are generated per
+   * request, so they are named in the order they appear.
+   */
+  module('request bodies', function () {
+    function postedDocument(fetchStub) {
+      const call = fetchStub
+        .getCalls()
+        .find(
+          ({ args: [url, options] }) =>
+            url === '/change-requests' && options?.method === 'POST',
+        );
+      const names = new Map();
+      const name = (lid) => {
+        if (!names.has(lid)) {
+          names.set(lid, `lid-${names.size + 1}`);
+        }
+        return names.get(lid);
+      };
+      return JSON.parse(call.args[1].body, (key, value) =>
+        key === 'lid' ? name(value) : value,
+      );
+    }
+
+    /**
+     * Answer the POST with a request that waits for ABB: the new records are
+     * dropped and the others reloaded (here in a minimal form).
+     */
+    function waitForAbb(fetchStub, adapter) {
+      acceptReloads(adapter);
+      fetchStub.resolves(
+        jsonResponse(201, {
+          data: {
+            type: 'change-requests',
+            id: REQUEST_ID,
+            attributes: { status: 'ingediend', conflicts: [] },
+          },
+        }),
+      );
+    }
+
+    test('organization-core-data: the kerngegevens of a gemeente with a new SharePoint number', async function (assert) {
+      const [organization, , , kboIdentifier, kboStructured] = this.store.push({
+        data: [
+          {
+            type: 'administrative-unit',
+            id: 'org-1',
+            attributes: { name: 'Aalst', legalName: 'Aalst' },
+            relationships: {
+              classification: {
+                data: {
+                  type: 'administrative-unit-classification-code',
+                  id: CLASSIFICATION.MUNICIPALITY.id,
+                },
+              },
+              organizationStatus: {
+                data: { type: 'organization-status-code', id: 'status-1' },
+              },
+              identifiers: { data: [{ type: 'identifier', id: 'id-kbo' }] },
+            },
+          },
+          {
+            type: 'administrative-unit-classification-code',
+            id: CLASSIFICATION.MUNICIPALITY.id,
+          },
+          { type: 'organization-status-code', id: 'status-1' },
+          {
+            type: 'identifier',
+            id: 'id-kbo',
+            attributes: { idName: ID_NAME.KBO },
+            relationships: {
+              structuredIdentifier: {
+                data: { type: 'structured-identifier', id: 'si-kbo' },
+              },
+            },
+          },
+          {
+            type: 'structured-identifier',
+            id: 'si-kbo',
+            attributes: { localId: '0207437468' },
+          },
+        ],
+      });
+      organization.setAbbName('Stad Aalst');
+      const sharepointStructured = this.store.createRecord(
+        'structured-identifier',
+        { localId: '42' },
+      );
+      const sharepointIdentifier = this.store.createRecord('identifier', {
+        idName: ID_NAME.SHAREPOINT,
+        structuredIdentifier: sharepointStructured,
+      });
+      (await organization.identifiers).push(sharepointIdentifier);
+      waitForAbb(this.fetch, this.adapter);
+
+      await rejection(
+        this.service.submit('organization-core-data', 'org-1', [
+          kboStructured,
+          kboIdentifier,
+          sharepointStructured,
+          sharepointIdentifier,
+          organization,
+        ]),
+      );
+
+      assert.deepEqual(postedDocument(this.fetch), {
+        data: {
+          type: 'change-requests',
+          attributes: {
+            aggregate: 'organization-core-data',
+            operations: [
+              {
+                op: 'update',
+                data: {
+                  id: 'si-kbo',
+                  attributes: {
+                    'local-id': '0207437468',
+                  },
+                  type: 'structured-identifiers',
+                  meta: {
+                    base: {
+                      attributes: {
+                        'local-id': '0207437468',
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                op: 'update',
+                data: {
+                  id: 'id-kbo',
+                  attributes: {
+                    'id-name': 'KBO nummer',
+                  },
+                  relationships: {
+                    'structured-identifier': {
+                      data: {
+                        type: 'structured-identifiers',
+                        id: 'si-kbo',
+                      },
+                    },
+                  },
+                  type: 'identifiers',
+                  meta: {
+                    base: {
+                      attributes: {
+                        'id-name': 'KBO nummer',
+                      },
+                      relationships: {
+                        'structured-identifier': {
+                          data: {
+                            type: 'structured-identifiers',
+                            id: 'si-kbo',
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'local-id': '42',
+                  },
+                  type: 'structured-identifiers',
+                  lid: 'lid-1',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'id-name': 'SharePoint identificator',
+                  },
+                  type: 'identifiers',
+                  lid: 'lid-2',
+                  relationships: {
+                    'structured-identifier': {
+                      data: {
+                        type: 'structured-identifiers',
+                        lid: 'lid-1',
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                op: 'update',
+                data: {
+                  id: 'org-1',
+                  attributes: {
+                    name: 'Stad Aalst',
+                    'legal-name': 'Stad Aalst',
+                    'alternative-name': [],
+                    'expected-end-date': null,
+                  },
+                  relationships: {
+                    classification: {
+                      data: {
+                        type: 'administrative-unit-classification-codes',
+                        id: '5ab0e9b8a3b2ca7c5e000001',
+                      },
+                    },
+                    'organization-status': {
+                      data: {
+                        type: 'organization-status-codes',
+                        id: 'status-1',
+                      },
+                    },
+                    identifiers: {
+                      data: [
+                        {
+                          type: 'identifiers',
+                          id: 'id-kbo',
+                        },
+                        {
+                          type: 'identifiers',
+                          lid: 'lid-2',
+                        },
+                      ],
+                    },
+                  },
+                  type: 'administrative-units',
+                  meta: {
+                    base: {
+                      attributes: {
+                        name: 'Aalst',
+                        'legal-name': 'Aalst',
+                        'alternative-name': [],
+                        'expected-end-date': null,
+                      },
+                      relationships: {
+                        classification: {
+                          data: {
+                            type: 'administrative-unit-classification-codes',
+                            id: '5ab0e9b8a3b2ca7c5e000001',
+                          },
+                        },
+                        'organization-status': {
+                          data: {
+                            type: 'organization-status-codes',
+                            id: 'status-1',
+                          },
+                        },
+                        identifiers: {
+                          data: [
+                            {
+                              type: 'identifiers',
+                              id: 'id-kbo',
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          relationships: {
+            target: {
+              data: {
+                type: 'organizations',
+                id: 'org-1',
+              },
+            },
+          },
+        },
+      });
+    });
+
+    test('site: a new primary site with its address and contact points', async function (assert) {
+      const { organization, site, address, contact, secondaryContact } =
+        newSiteForOrganization(this.store);
+      organization.primarySite = site;
+      waitForAbb(this.fetch, this.adapter);
+
+      await rejection(
+        this.service.submit('site', organization.id, [
+          contact,
+          secondaryContact,
+          address,
+          site,
+          organization,
+        ]),
+      );
+
+      assert.deepEqual(postedDocument(this.fetch), {
+        data: {
+          type: 'change-requests',
+          attributes: {
+            aggregate: 'site',
+            operations: [
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    email: 'info@gent.be',
+                    telephone: null,
+                    type: 'Primary',
+                    'harvest-date': null,
+                  },
+                  type: 'contact-points',
+                  lid: 'lid-1',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    telephone: null,
+                    type: 'Secondary',
+                    'harvest-date': null,
+                  },
+                  type: 'contact-points',
+                  lid: 'lid-2',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    number: '1',
+                    street: 'Kerkstraat',
+                    postcode: '9000',
+                    municipality: 'Gent',
+                    country: 'België',
+                    'harvest-date': null,
+                  },
+                  type: 'addresses',
+                  lid: 'lid-3',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {},
+                  relationships: {
+                    contacts: {
+                      data: [
+                        {
+                          type: 'contact-points',
+                          lid: 'lid-1',
+                        },
+                        {
+                          type: 'contact-points',
+                          lid: 'lid-2',
+                        },
+                      ],
+                    },
+                    'site-type': {
+                      data: {
+                        type: 'site-types',
+                        id: 'site-type-1',
+                      },
+                    },
+                    address: {
+                      data: {
+                        type: 'addresses',
+                        lid: 'lid-3',
+                      },
+                    },
+                  },
+                  type: 'sites',
+                  lid: 'lid-4',
+                },
+              },
+              {
+                op: 'update',
+                data: {
+                  id: 'org-1',
+                  attributes: {
+                    name: 'Gemeente Test',
+                    'legal-name': 'Gemeente Test',
+                    'alternative-name': [],
+                    'expected-end-date': null,
+                  },
+                  relationships: {
+                    sites: {
+                      data: [],
+                    },
+                    'primary-site': {
+                      data: {
+                        type: 'sites',
+                        lid: 'lid-4',
+                      },
+                    },
+                  },
+                  type: 'organizations',
+                  meta: {
+                    base: {
+                      attributes: {
+                        name: 'Gemeente Test',
+                        'legal-name': 'Gemeente Test',
+                        'alternative-name': [],
+                        'expected-end-date': null,
+                      },
+                      relationships: {
+                        sites: {
+                          data: [],
+                        },
+                        'primary-site': {
+                          data: null,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          relationships: {
+            target: {
+              data: {
+                type: 'organizations',
+                id: 'org-1',
+              },
+            },
+          },
+        },
+      });
+    });
+  });
+
+  module('answers without a stored request', function () {
+    test('an edit that changes nothing is stored by nothing: the records are reloaded as after a save', async function (assert) {
+      const [organization] = this.store.push({
+        data: [
+          {
+            type: 'organization',
+            id: 'org-1',
+            attributes: { name: 'Aalst', legalName: 'Aalst' },
+          },
+        ],
+      });
+      organization.legalName = 'Stad Aalst';
+      this.fetch.resolves(
+        jsonResponse(200, { data: null, meta: { unchanged: true } }),
+      );
+      const reloads = acceptReloads(this.adapter);
+
+      const saved = await this.service.submit(
+        'organization-core-data',
+        'org-1',
+        [organization],
+      );
+
+      assert.strictEqual(saved.get(organization), organization);
+      assert.true(reloads.calledOnce, 'reloaded, as after a save');
+      assert.false(organization.hasDirtyAttributes, 'the local change is gone');
+    });
+
+    test('a 2xx answer that cannot be read leaves the outcome unknown', async function (assert) {
+      const [organization] = this.store.push({
+        data: [
+          { type: 'organization', id: 'org-1', attributes: { name: 'Aalst' } },
+        ],
+      });
+      organization.name = 'Stad Aalst';
+      this.fetch.resolves(
+        new Response('<html>Bad gateway</html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      );
+
+      const error = await rejection(
+        this.service.submit('organization-core-data', 'org-1', [organization]),
+      );
+
+      assert.true(error instanceof ChangeRequestError, 'no SyntaxError');
+      assert.true(error.outcomeUnknown);
+      assert.false(error.refused);
+      assert.true(error.message.includes('mogelijk doorgevoerd'));
+    });
+
+    test('a submit that gets no answer may have been carried out; a step that gets none can be tried again', async function (assert) {
+      const [organization] = this.store.push({
+        data: [
+          { type: 'organization', id: 'org-1', attributes: { name: 'Aalst' } },
+        ],
+      });
+      organization.name = 'Stad Aalst';
+      this.fetch.rejects(new TypeError('Failed to fetch'));
+
+      const error = await rejection(
+        this.service.submit('organization-core-data', 'org-1', [organization]),
+      );
+
+      assert.true(error.outcomeUnknown, 'not "never sent"');
+      assert.strictEqual(organization.name, 'Stad Aalst', 'the edits are kept');
+
+      const stepError = await rejection(
+        this.service.takeStep(
+          REQUEST_ID,
+          'intrekking',
+          'De stap kon niet verstuurd worden.',
+        ),
+      );
+      assert.false(
+        stepError.outcomeUnknown,
+        'the service refuses a step its request moved past',
+      );
+    });
+  });
+
+  module('hasChanges', function () {
+    test('only a key that differs from the value the record was loaded with is a change; a new record always is', async function (assert) {
+      const [organization, theme1, theme2] = this.store.push({
+        data: [
+          {
+            type: 'organization',
+            id: 'org-1',
+            attributes: {
+              name: 'Aalst',
+              legalName: 'Aalst',
+              alternativeName: ['A', 'B'],
+            },
+            relationships: {
+              contentThemes: {
+                data: [
+                  { type: 'concept', id: 'theme-1' },
+                  { type: 'concept', id: 'theme-2' },
+                ],
+              },
+            },
+          },
+          { type: 'concept', id: 'theme-1' },
+          { type: 'concept', id: 'theme-2' },
+        ],
+      });
+
+      assert.false(this.service.hasChanges([organization]), 'loaded as it is');
+
+      organization.alternativeName = ['B', 'A'];
+      organization.contentThemes = [theme2, theme1];
+      assert.false(
+        this.service.hasChanges([organization]),
+        'lists compare as sets, as the service merges them',
+      );
+
+      organization.legalName = 'Stad Aalst';
+      assert.true(this.service.hasChanges([organization]));
+
+      organization.legalName = 'Aalst';
+      organization.contentThemes = [theme1];
+      assert.true(this.service.hasChanges([organization]));
+
+      organization.contentThemes = [theme1, theme2];
+      const site = this.store.createRecord('site');
+      assert.true(this.service.hasChanges([site, organization]));
+      assert.true(this.fetch.notCalled, 'nothing is sent');
+    });
+  });
+
+  module('relationships that were never loaded', function () {
+    /**
+     * The document of a gemeente as mu-cl-resources sends it without include:
+     * its relationships as links. A function, since the serializer
+     * normalises a document in place.
+     */
+    const organizationDocument = () => ({
+      data: {
+        type: 'administrative-units',
+        id: 'org-1',
+        attributes: { name: 'Aalst', 'legal-name': 'Aalst' },
+        relationships: {
+          'legal-form': {
+            links: { related: '/administrative-units/org-1/legal-form' },
+          },
+          'additional-qualifications': {
+            links: {
+              related: '/administrative-units/org-1/additional-qualifications',
+            },
+          },
+        },
+      },
+    });
+
+    test('a change to a relationship the backend sent as a link only is refused before anything is sent', async function (assert) {
+      const organization = await loadRecord(
+        this.store,
+        this.adapter,
+        'organization',
+        organizationDocument(),
+      );
+      const [legalForm, qualification] = this.store.push({
+        data: [
+          { type: 'concept', id: 'legal-form-2' },
+          { type: 'additional-qualification-code', id: 'qualification-2' },
+        ],
+      });
+
+      assert.deepEqual(
+        organization.additionalQualifications.slice(),
+        [],
+        'the store reads the synchronous one as empty',
+      );
+      assert.false(
+        this.service.hasChanges([organization]),
+        'untouched, both are no change',
+      );
+
+      organization.legalForm = legalForm;
+      await assert.rejects(
+        this.service.submit('change-event', 'org-1', [organization]),
+        /legalForm.*never loaded/,
+      );
+
+      this.service.rollbackRelationships(organization);
+      organization.additionalQualifications = [qualification];
+      await assert.rejects(
+        this.service.submit('change-event', 'org-1', [organization]),
+        /additionalQualifications.*never loaded/,
+      );
+      assert.true(this.fetch.notCalled, 'nothing is sent');
+    });
+
+    test('a relationship loaded through its link can be changed', async function (assert) {
+      const organization = await loadRecord(
+        this.store,
+        this.adapter,
+        'organization',
+        organizationDocument(),
+      );
+      this.fetch.callsFake(async (url) => {
+        if (url === '/administrative-units/org-1/legal-form') {
+          return jsonResponse(200, {
+            data: { type: 'concepts', id: 'legal-form-1' },
+          });
+        }
+        if (url === '/administrative-units/org-1/additional-qualifications') {
+          return jsonResponse(200, {
+            data: [
+              { type: 'additional-qualification-codes', id: 'qualification-1' },
+            ],
+          });
+        }
+        return jsonResponse(201, {
+          data: {
+            type: 'change-requests',
+            id: REQUEST_ID,
+            attributes: { status: 'ingediend' },
+          },
+        });
+      });
+      acceptReloads(this.adapter);
+      // As the change-event form loads what it may change
+      await organization.legalForm;
+      await organization.hasMany('additionalQualifications').reload();
+      const [legalForm, qualification] = this.store.push({
+        data: [
+          { type: 'concept', id: 'legal-form-2' },
+          { type: 'additional-qualification-code', id: 'qualification-2' },
+        ],
+      });
+      organization.legalForm = legalForm;
+      organization.additionalQualifications = [qualification];
+
+      await rejection(
+        this.service.submit('change-event', 'org-1', [organization]),
+      );
+
+      const { data } = JSON.parse(this.fetch.lastCall.args[1].body).data
+        .attributes.operations[0];
+      assert.deepEqual(data.meta.base.relationships['legal-form'], {
+        data: { type: 'concepts', id: 'legal-form-1' },
+      });
+      assert.deepEqual(
+        data.meta.base.relationships['additional-qualifications'],
+        {
+          data: [
+            { type: 'additional-qualification-codes', id: 'qualification-1' },
+          ],
+        },
+        'the base is what the server has',
       );
     });
   });
