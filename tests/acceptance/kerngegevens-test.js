@@ -7,6 +7,7 @@ import {
   triggerEvent,
   visit,
   waitFor,
+  waitUntil,
 } from '@ember/test-helpers';
 import { authenticateSession } from 'ember-simple-auth/test-support';
 import { setupApplicationTest } from 'frontend-organization-portal/tests/helpers';
@@ -231,5 +232,42 @@ module('Acceptance | kerngegevens bewerken', function (hooks) {
     await triggerEvent('#edit-core-info-form', 'submit');
 
     assert.strictEqual(submits(), 1, 'a second save sends nothing');
+  });
+
+  test('a KBO number another organisation holds is shown on the KBO field, in Dutch', async function (assert) {
+    this.fetch.withArgs('/change-requests').callsFake(async () =>
+      jsonResponse(409, {
+        errors: [
+          {
+            status: '409',
+            title: 'An organisation with this KBO number is already registered',
+            meta: {
+              'kbo-number': '0123456789',
+              organisation: { type: 'organizations', id: 'org-other' },
+            },
+          },
+        ],
+      }),
+    );
+
+    await visit('/organisaties/org-agb/kerngegevens/edit');
+    await fillIn('#organization-legal-name', 'AGB Aalst Noord');
+    await blur('#organization-legal-name');
+    await click('button[form="edit-core-info-form"]');
+    const kboItem = document
+      .querySelector('#kbo-identifier')
+      .closest('.au-c-card-item');
+    // The save task runs on after the click settles
+    await waitUntil(() => kboItem.textContent.includes('KBO-nummer'), {
+      timeoutMessage: 'the KBO field never showed the message of the 409',
+    });
+
+    assert
+      .dom(kboItem)
+      .includesText('Er bestaat al een organisatie met dit KBO-nummer.');
+    assert.dom(kboItem).doesNotIncludeText('[object Object]');
+    assert
+      .dom('button[form="edit-core-info-form"]')
+      .isNotDisabled('a corrected number can be sent');
   });
 });

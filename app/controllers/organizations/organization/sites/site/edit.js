@@ -174,16 +174,15 @@ export default class OrganizationsOrganizationSitesSiteEditController extends Co
         records.push(organization);
       }
 
-      // Nothing changed: no request, the page is left as after a save
-      if (!this.changeRequests.hasChanges(records)) {
-        this.router.transitionTo(
-          'organizations.organization.sites.site',
-          site.id,
-        );
-        return;
-      }
-
       try {
+        // Nothing changed: no request, the page is left as after a save
+        if (!this.changeRequests.hasChanges(records)) {
+          this.router.transitionTo(
+            'organizations.organization.sites.site',
+            site.id,
+          );
+          return;
+        }
         await this.changeRequests.submit('site', organization.id, records);
       } catch (error) {
         if (!(error instanceof ChangeRequestError)) {

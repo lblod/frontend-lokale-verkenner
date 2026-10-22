@@ -2834,6 +2834,26 @@ module('Unit | Service | change-requests', function (hooks) {
         'the service refuses a step its request moved past',
       );
     });
+
+    test('a submit that fails while the browser is offline was not sent: the page may try again', async function (assert) {
+      const [organization] = this.store.push({
+        data: [
+          { type: 'organization', id: 'org-1', attributes: { name: 'Aalst' } },
+        ],
+      });
+      organization.name = 'Stad Aalst';
+      this.fetch.rejects(new TypeError('Failed to fetch'));
+      sinon.stub(Navigator.prototype, 'onLine').get(() => false);
+
+      const error = await rejection(
+        this.service.submit('organization-core-data', 'org-1', [organization]),
+      );
+
+      assert.true(error instanceof ChangeRequestError);
+      assert.false(error.outcomeUnknown, 'nothing reached the service');
+      assert.true(error.message.includes('geen verbinding'));
+      assert.strictEqual(organization.name, 'Stad Aalst', 'the edits are kept');
+    });
   });
 
   module('hasChanges', function () {
@@ -2936,14 +2956,14 @@ module('Unit | Service | change-requests', function (hooks) {
       organization.legalForm = legalForm;
       await assert.rejects(
         this.service.submit('change-event', 'org-1', [organization]),
-        /legalForm.*never loaded/,
+        /legalForm.*niet geladen/,
       );
 
       this.service.rollbackRelationships(organization);
       organization.additionalQualifications = [qualification];
       await assert.rejects(
         this.service.submit('change-event', 'org-1', [organization]),
-        /additionalQualifications.*never loaded/,
+        /additionalQualifications.*niet geladen/,
       );
       assert.true(this.fetch.notCalled, 'nothing is sent');
     });

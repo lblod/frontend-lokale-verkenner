@@ -36,6 +36,12 @@ const APPLY_FAILED_MESSAGE =
  */
 const UNANSWERED_MESSAGE =
   'De wijziging kon niet verstuurd worden, of het antwoord van de dienst kwam niet aan: ze is mogelijk toch doorgevoerd. Herlaad de pagina en controleer of de wijziging is doorgevoerd voor je opnieuw opslaat.';
+/**
+ * A submit the browser did not send because it knows it is offline: nothing
+ * reached the service, so the page may try again.
+ */
+const OFFLINE_MESSAGE =
+  'Er is geen verbinding: de wijziging werd niet verstuurd. Controleer de verbinding en probeer opnieuw.';
 const UNREADABLE_ANSWER_MESSAGE =
   'De dienst antwoordde, maar het antwoord kon niet gelezen worden: de wijziging is mogelijk doorgevoerd. Herlaad de pagina en controleer of de wijziging is doorgevoerd voor je opnieuw opslaat.';
 const UNREADABLE_LIST_MESSAGE =
@@ -1090,8 +1096,16 @@ function serializeBase(serializer, cache, snapshot, data) {
       relationship.options?.inverse === null &&
       !serializer.relationshipLoaded?.(snapshot.modelName, snapshot.id, name)
     ) {
-      throw new Error(
-        `The ${snapshot.modelName} ${snapshot.id} changes its relationship "${name}", whose value was never loaded from the backend: the change request cannot carry the value the server has as its base. Load the relationship before the page changes it.`,
+      // A fault of the page, not of the user: shown on the page like any
+      // refusal instead of ending the save as an uncaught error, with the
+      // explanation for the developer as its cause
+      throw new ChangeRequestError(
+        `De wijziging van "${name}" kan niet verstuurd worden: de huidige waarde ervan werd niet geladen (${snapshot.modelName} ${snapshot.id}). Herlaad de pagina en probeer opnieuw.`,
+        {
+          cause: new Error(
+            `The ${snapshot.modelName} ${snapshot.id} changes its relationship "${name}", whose value was never loaded from the backend: the change request cannot carry the value the server has as its base. Load the relationship before the page changes it.`,
+          ),
+        },
       );
     }
     if (relationship.kind === 'belongsTo') {
@@ -1414,7 +1428,8 @@ async function get(url, unsentMessage) {
  * @param {Object} [options]
  * @param {boolean} [options.outcomeUnknown] - whether a POST without answer
  *     may have been carried out all the same: true for one that a retry
- *     could duplicate; a step is refused once its request moved on
+ *     could duplicate; a step is refused once its request moved on. Not
+ *     while the browser reports it is offline: it sent nothing then
  * @returns {Promise<Response>}
  */
 async function post(
@@ -1433,9 +1448,12 @@ async function post(
       body: JSON.stringify(document),
     });
   } catch (error) {
-    throw new ChangeRequestError(unsentMessage, {
+    // A browser that knows it is offline sends nothing: the outcome is known
+    const offline =
+      typeof navigator !== 'undefined' && navigator.onLine === false;
+    throw new ChangeRequestError(offline ? OFFLINE_MESSAGE : unsentMessage, {
       cause: error,
-      outcomeUnknown,
+      outcomeUnknown: outcomeUnknown && !offline,
     });
   }
 }

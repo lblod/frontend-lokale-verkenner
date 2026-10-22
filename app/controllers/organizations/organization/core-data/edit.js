@@ -241,14 +241,13 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
 
       records.push(setEmptyStringsToNull(organization));
 
-      // Nothing changed: no request, the page is left as after a save
-      if (!this.changeRequests.hasChanges(records)) {
-        this.leave(organization.id);
-        return;
-      }
-
       let saved;
       try {
+        // Nothing changed: no request, the page is left as after a save
+        if (!this.changeRequests.hasChanges(records)) {
+          this.leave(organization.id);
+          return;
+        }
         saved = await this.changeRequests.submit(
           'organization-core-data',
           organization.id,
@@ -321,10 +320,27 @@ export default class OrganizationsOrganizationCoreDataEditController extends Con
     this.saveBlocked = heldRequest.reloadFailed;
   }
 
+  /**
+   * Have the KBO data of the organisation fetched from Wegwijs for its saved
+   * KBO number (kbo-data-sync, as in OP). The change is applied by now, so a
+   * sync that fails does not fail the save: the page leaves as after any
+   * save, and the nightly sync of that service catches up.
+   *
+   * @param {string} structuredIdentifierId - uuid of the structured
+   *     identifier that holds the KBO number
+   */
   async syncKboData(structuredIdentifierId) {
-    await fetch(`/kbo-data-sync/${structuredIdentifierId}`, {
-      method: 'POST',
-    });
+    const url = `/kbo-data-sync/${structuredIdentifierId}`;
+    try {
+      const response = await fetch(url, { method: 'POST' });
+      if (!response.ok) {
+        console.warn(
+          `The KBO data could not be synced: ${url} answered ${response.status}`,
+        );
+      }
+    } catch (error) {
+      console.warn(`The KBO data could not be synced: ${url} failed`, error);
+    }
   }
 
   /**
