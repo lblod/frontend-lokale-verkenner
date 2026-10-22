@@ -1,6 +1,5 @@
 <AuDataTable
   @content={{@content}}
-  @sort={{@sort}}
   @page={{@page}}
   @size={{@size}}
   @isLoading={{@isLoading}}
@@ -12,7 +11,7 @@
       <div class="au-o-box">
         <MembershipRoleSelect
           @disabled={{@unsavedEdit}}
-          @options={{@model.roles}}
+          @options={{@model.selectableRoleLabels}}
           @selected={{@selectedRole}}
           @onChange={{fn (mut @selectedRole)}}
           @allowClear={{true}}
@@ -26,7 +25,10 @@
       <th>Type relatie</th>
       <th>Type organisatie</th>
       <th>Organisatie</th>
-      <th>Status</th>
+      <th>Status organisatie</th>
+      <th>Startdatum relatie</th>
+      <th>Einddatum relatie</th>
+      <th>Status relatie</th>
       <th></th>
     </c.header>
 
@@ -37,7 +39,7 @@
             <MembershipRoleSelect
               @disabled={{not membership.isNew}}
               @selected={{fn @displayRoleLabel membership}}
-              @options={{@model.selectableRoles}}
+              @options={{@model.allowedRoleLabels}}
               @onChange={{fn @updateMembershipRole membership}}
               @error={{errorMessage}}
               @id="membership-role"
@@ -102,13 +104,56 @@
           {{/if}}
         </td>
         <td>
+          {{#let membership.during.error.startDate.message as |errorMessage|}}
+            <Datepicker
+              @value={{membership.during.startDate}}
+              @onChange={{fn @setStartDate membership}}
+              @error={{errorMessage}}
+            />
+            {{#if errorMessage}}
+              <AuHelpText @error={{true}}>{{errorMessage}}</AuHelpText>
+            {{/if}}
+          {{/let}}
+        </td>
+        <td>
+          {{#let membership.during.error.endDate.message as |errorMessage|}}
+            <Datepicker
+              @value={{membership.during.endDate}}
+              @onChange={{fn @setEndDate membership}}
+              @error={{errorMessage}}
+            />
+            {{#if errorMessage}}
+              <AuHelpText @error={{true}}>{{errorMessage}}</AuHelpText>
+            {{/if}}
+          {{/let}}
+        </td>
+        <td>
+          {{#let
+            (relation-status
+              endDate=membership.during.endDate
+              memberStatusId=membership.member.organizationStatus.id
+              organizationStatusId=membership.organization.organizationStatus.id
+            )
+            as |relationStatus|
+          }}
+            <OrganizationStatus
+              @id={{relationStatus.id}}
+              @label={{relationStatus.label}}
+            />
+          {{/let}}
+        </td>
+        <td>
           <AuButton
             @alert={{true}}
-            @disabled={{membership.isNotRemovableByUser}}
+            @disabled={{or
+              membership.isNotRemovableByUser
+              @removeRelatedOrganization.isRunning
+            }}
+            @loading={{@removeRelatedOrganization.isRunning}}
             @icon="bin"
             @iconAlignment="left"
             @skin="link"
-            {{on "click" (fn @removeRelatedOrganization membership)}}
+            {{on "click" (perform @removeRelatedOrganization membership)}}
           >
             Verwijder
           </AuButton>

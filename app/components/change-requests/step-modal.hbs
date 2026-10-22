@@ -1,0 +1,114 @@
+<AuModal
+  @modalOpen={{true}}
+  @closable={{true}}
+  @closeModal={{@onClose}}
+  @overflow={{true}}
+  ...attributes
+>
+  <:title>{{this.config.title}}</:title>
+  <:body>
+    <div class="au-o-flow au-o-flow--small">
+      {{#if this.config.intro}}
+        <p>{{this.config.intro}}</p>
+      {{/if}}
+
+      {{#if this.conflicts.length}}
+        <AuAlert
+          @skin="warning"
+          @icon="alert-triangle"
+          @title="Intussen gewijzigde gegevens"
+          data-test-step-conflicts
+        >
+          <p>
+            Sinds de aanvraag werd ingediend zijn deze gegevens door iemand
+            anders gewijzigd. Goedkeuren overschrijft ze met wat de aanvraag
+            voorstelt.
+          </p>
+          <ul class="au-u-margin-top-small">
+            {{#each this.conflicts as |conflict|}}
+              <li>
+                <strong>{{conflict.label}}</strong>: nu
+                <em><ChangeRequests::ConflictValue
+                    @parts={{conflict.current}}
+                    @operations={{@request.attributes.operations}}
+                  /></em>, de aanvraag stelt
+                <em><ChangeRequests::ConflictValue
+                    @parts={{conflict.proposed}}
+                    @operations={{@request.attributes.operations}}
+                  /></em>
+                voor
+              </li>
+            {{/each}}
+          </ul>
+          <AuCheckbox
+            @checked={{this.overrideConfirmed}}
+            @onChange={{this.toggleOverride}}
+            class="au-u-margin-top-small"
+            data-test-step-override
+          >
+            Ik heb deze verschillen bekeken en keur de aanvraag toch goed.
+          </AuCheckbox>
+        </AuAlert>
+      {{/if}}
+
+      {{#if this.config.textLabel}}
+        <div>
+          <AuLabel
+            for="step-text"
+            @required={{true}}
+            @requiredLabel="Verplicht"
+            @error={{this.textError}}
+          >
+            {{this.config.textLabel}}
+          </AuLabel>
+          <AuTextarea
+            id="step-text"
+            @width="block"
+            @error={{this.textError}}
+            value={{this.text}}
+            rows="5"
+            data-test-step-text
+            {{on "input" this.updateText}}
+          />
+          {{#if this.textError}}
+            <AuHelpText @error={{true}}>{{this.textError}}</AuHelpText>
+          {{/if}}
+        </div>
+      {{/if}}
+
+      {{#if this.error}}
+        <AuAlert
+          @skin="error"
+          @icon="alert-triangle"
+          @title="Niet gelukt"
+          data-test-step-error
+        >
+          {{this.error}}
+        </AuAlert>
+      {{/if}}
+    </div>
+  </:body>
+  <:footer>
+    <AuToolbar @reverse={{true}} as |Group|>
+      <Group>
+        <AuButton
+          @skin="secondary"
+          @disabled={{this.submit.isRunning}}
+          data-test-step-cancel
+          {{on "click" @onClose}}
+        >
+          Annuleren
+        </AuButton>
+        <AuButton
+          @alert={{this.config.alert}}
+          @loading={{this.submit.isRunning}}
+          @loadingMessage={{this.config.loadingLabel}}
+          data-test-step-confirm
+          {{on "click" (perform this.submit)}}
+        >
+          {{this.config.confirmLabel}}
+        </AuButton>
+      </Group>
+    </AuToolbar>
+  </:footer>
+</AuModal>

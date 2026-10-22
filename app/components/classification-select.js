@@ -39,6 +39,12 @@ export default class ClassificationSelectComponent extends Component {
       this.args.restrictForNewOrganizations,
     );
 
+    // The codes the caller allows, e.g. the ones the session may request a
+    // new organisation of; an empty list allows none.
+    if (Array.isArray(this.args.allowedIds)) {
+      allowedIds = allowedIds.filter((id) => this.args.allowedIds.includes(id));
+    }
+
     let selectedRecognizedWorshipTypeId =
       this.args.selectedRecognizedWorshipTypeId;
 

@@ -2,75 +2,93 @@ import Controller from '@ember/controller';
 import { action } from '@ember/object';
 import { service } from '@ember/service';
 import { dropTask } from 'ember-concurrency';
-import {
-  CHANGE_EVENT_TYPE,
-  isNameChange,
-} from 'frontend-organization-portal/models/change-event-type';
-import { ORGANIZATION_STATUS } from 'frontend-organization-portal/models/organization-status-code';
-import isAdditionalQualificationChangeEvent from 'frontend-organization-portal/helpers/is-additional-qualification-change-event';
 import { tracked } from '@glimmer/tracking';
 import {
   findRecord,
   query as queryBuilder,
-  saveRecord,
 } from '@warp-drive/legacy/compat/builders';
+import {
+  CHANGE_EVENT_TYPE,
+  MultipleOrganizationTypeIdList,
+  isNameChangeType,
+} from 'frontend-organization-portal/models/change-event-type';
+import { ORGANIZATION_STATUS } from 'frontend-organization-portal/models/organization-status-code';
+import isAdditionalQualificationChangeEvent from 'frontend-organization-portal/helpers/is-additional-qualification-change-event';
+import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
+import { isLoaded } from 'frontend-organization-portal/utils/records';
 
-const RESULTING_STATUS_FOR_CHANGE_EVENT_TYPE = {
+/**
+ * The status an organisation has after a change event of the type, as OP's
+ * form sets it; a type that is not listed keeps the status.
+ */
+export const RESULTING_STATUS_FOR_CHANGE_EVENT_TYPE = {
   [CHANGE_EVENT_TYPE.NAME_CHANGE]: ORGANIZATION_STATUS.ACTIVE,
   [CHANGE_EVENT_TYPE.IN_ONTBINDING]: ORGANIZATION_STATUS.ACTIVE,
   [CHANGE_EVENT_TYPE.OPRICHTING]: ORGANIZATION_STATUS.ACTIVE,
   [CHANGE_EVENT_TYPE.IN_VEREFFENING]: ORGANIZATION_STATUS.ACTIVE,
   [CHANGE_EVENT_TYPE.ONTBONDEN_EN_VEREFFEND]: ORGANIZATION_STATUS.INACTIVE,
-  [CHANGE_EVENT_TYPE.AREA_DESCRIPTION_CHANGE]: ORGANIZATION_STATUS.ACTIVE,
-  [CHANGE_EVENT_TYPE.RECOGNITION_NOT_GRANTED]: ORGANIZATION_STATUS.INACTIVE,
-  [CHANGE_EVENT_TYPE.RECOGNITION_LIFTED]: ORGANIZATION_STATUS.INACTIVE,
-  [CHANGE_EVENT_TYPE.RECOGNITION_REQUESTED]: ORGANIZATION_STATUS.IN_FORMATION,
-  [CHANGE_EVENT_TYPE.RECOGNITION_GRANTED]: ORGANIZATION_STATUS.ACTIVE,
-  [CHANGE_EVENT_TYPE.SUSPENSION_OF_RECOGNITION]: ORGANIZATION_STATUS.INACTIVE,
-  [CHANGE_EVENT_TYPE.SANCTIONED]: ORGANIZATION_STATUS.ACTIVE,
   [CHANGE_EVENT_TYPE.CITY]: ORGANIZATION_STATUS.ACTIVE,
   [CHANGE_EVENT_TYPE.GEOGRAPHICAL_AREA_CHANGE]: ORGANIZATION_STATUS.ACTIVE,
   [CHANGE_EVENT_TYPE.LEGAL_FORM_CHANGE]: ORGANIZATION_STATUS.ACTIVE,
-  // MERGER and FUSIE aren't added here since they have multiple resulting
-  // statuses based on the resulting organization
 };
 
-const RECOGNITION_CHANGE_TYPES = [
-  CHANGE_EVENT_TYPE.RECOGNITION_GRANTED,
-  CHANGE_EVENT_TYPE.RECOGNITION_NOT_GRANTED,
-];
-
+/**
+ * The form that requests a veranderingsgebeurtenis about one organisation:
+ * the change event with its besluit, its result (the resulting status, legal
+ * form, werkingsgebied, qualifications or name) and the fields of the
+ * organisation the event changes, submitted as one change request
+ * (aggregate `change-event`). The event is recorded and the organisation
+ * changed when ABB approves; ABB's own request is applied at once.
+ *
+ * Events that involve several organisations (fusie, samenvoeging) are not
+ * requests yet: the type select leaves them out. A new werkingsgebied comes
+ * from the scope-of-operation service, as in OP. The relations of an
+ * organisation that is dissolved are not ended here; they follow with the
+ * related-organisations work.
+ */
 export default class OrganizationsOrganizationChangeEventsNewController extends Controller {
   @service router;
   @service store;
   @service scopeOfOperation;
+  @service changeRequests;
+  @service toaster;
 
-  @tracked
-  isAddingOriginalOrganizations = true;
+  @tracked selectedResultingLegalForm;
+  @tracked selectedResultingLocations = [];
+  @tracked selectedResultingAdditionalQualifications = [];
+  @tracked resultingName = null;
 
-  @tracked
-  selectedResultingOrganization;
+  /**
+   * The submitter's explanation, kept on the request for ABB.
+   */
+  @tracked reason = '';
 
-  @tracked
-  selectedResultingLegalForm;
+  /**
+   * The message of the change-request service when it refused the request.
+   */
+  @tracked saveError = null;
 
-  @tracked
-  selectedResultingLocations = [];
+  /**
+   * Whether sending is blocked until the page is reloaded: the last attempt
+   * ended without knowing whether the service recorded or applied it (a
+   * 5xx, no answer), and a new one could register the event twice.
+   */
+  @tracked saveBlocked = false;
 
-  @tracked
-  selectedResultingAdditionalQualifications = [];
+  /**
+   * The result the last attempt created, unloaded when the page is left.
+   */
+  changeEventResult = null;
 
-  @tracked
-  resultingName = null;
+  isNameChangeType = isNameChangeType;
 
-  isNameChange = isNameChange;
+  /**
+   * The types a request cannot carry: those about several organisations.
+   */
+  excludedTypeIds = MultipleOrganizationTypeIdList;
 
   get hasValidationErrors() {
-    return this.model.changeEvent.error || this.model.decision?.error;
-  }
-
-  get classificationCodes() {
-    return [this.model.organization.classification.get('id')];
+    return Boolean(this.model.changeEvent.error || this.model.decision?.error);
   }
 
   get isLegalFormChange() {
@@ -79,151 +97,68 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
     );
   }
 
-  @action
-  filterSelectedOriginalOrganizations(searchResults) {
-    const originalOrganizations =
-      this.model.changeEvent.hasMany('originalOrganizations').value() ?? [];
-    return searchResults.filter(
-      (organization) => !originalOrganizations.includes(organization),
-    );
+  /**
+   * Whether the request is applied at once: ABB decides, so its own
+   * registration needs no validation.
+   */
+  get appliesAtOnce() {
+    return this.changeRequests.rights?.canDecide === true;
   }
 
-  /**
-   * Update the original organizations related to the change event being
-   * created. If only one argument is provided this organization is added as a
-   * new original organization. Otherwise, if two arguments are provided the
-   * second one is considered as a replacement of the first. In other words the
-   * first organization will be removed as original organisation and the second
-   * organization is added as a new one.
-   * If the change event is being created for a central worship service, the
-   * provided arguments are also removed as possible resulting organizations.
-   * @param {OrganizationModel} previousOrganization
-   * @param {OrganizationModel} organization
-   */
-  @action
-  updateOriginalOrganizations(previousOrganization, organization) {
-    if (organization) {
-      this.removeOriginalOrganization(previousOrganization);
-      this.model.changeEvent.addOriginalOrganization(organization);
-    } else {
-      this.model.changeEvent.addOriginalOrganization(previousOrganization);
-    }
-    this.isAddingOriginalOrganizations = false;
-
-    // TODO: Would it not be more user-friendly to integrate the logic below as
-    // a rule in the validation? Silently altering values in the form seems
-    // weird
-
-    // Central worship service mergers must result in a new/different
-    // organisation than the original ones. Therefore reset the value of the
-    // selected resulting organisation if this is the same as the newly selected
-    // original organisation
-    if (this.model.organization.isCentralWorshipService) {
-      this.model.changeEvent.removeResultingOrganization(previousOrganization);
-      this.model.changeEvent.removeResultingOrganization(organization);
-      this.selectedResultingOrganization = null;
-    }
+  get submitLabel() {
+    return this.appliesAtOnce ? 'Opslaan' : 'Aanvraag versturen';
   }
 
-  /**
-   * Remove a previously added organization as original organization for the
-   * change event being created. This has only effect if the provided
-   * organization is not the same as the organization for which this change
-   * event is being created.
-   * If the change event concerns an organization which is *not* a central
-   * worship service the organization is also removed as potential resulting
-   * organization.
-   * @param {OrganizationModel} organization - the organization that
-   * should be removed as original organization
-   */
   @action
-  removeOriginalOrganization(organization) {
-    if (organization && this.model.organization !== organization) {
-      this.model.changeEvent.removeOriginalOrganization(organization);
-
-      if (
-        !this.model.organization.isCentralWorshipService &&
-        this.model.changeEvent.hasAsResultingOrganization(organization)
-      ) {
-        this.model.changeEvent.removeResultingOrganization(organization);
-        this.selectedResultingOrganization = null;
-      }
-    }
+  setType(type) {
+    this.model.changeEvent.type = type;
   }
 
-  /**
-   * Add the provided organization as resulting organization for the change
-   * event being created.
-   * Note this currently means that any previously specified resulting
-   * organization is removed as the form only supports specifying one resulting
-   * organization.
-   * @param {OrganizationModel} organization - the organization to be
-   * added as resulting organization
-   */
-  @action
-  updateResultingOrganizations(organization) {
-    this.model.changeEvent.addResultingOrganization(organization);
-    this.selectedResultingOrganization = organization;
-  }
-
-  /**
-   * Update the selected resulting legal form for a legal form change event
-   * @param {LegalFormCodeModel} legalForm - the legal form to be set
-   */
   @action
   updateResultingLegalForm(legalForm) {
     this.selectedResultingLegalForm = legalForm;
   }
 
-  /**
-   * Update the locations selected as the new werkingsgebied for a
-   * werkingsgebied change event. Multiple locations can be selected; they
-   * are combined into a single scope when the change event is saved.
-   * @param {Location[]} locations - the locations to be set
-   */
   @action
   updateResultingLocations(locations) {
     this.selectedResultingLocations = locations;
   }
 
-  /**
-   * Update the selected resulting additional qualifications for an
-   * additional qualification change event
-   * @param {AdditionalQualificationCode[]} qualifications - the
-   * qualifications to be set
-   */
   @action
   updateResultingAdditionalQualifications(qualifications) {
     this.selectedResultingAdditionalQualifications = qualifications;
   }
 
-  createNewChangeEventTask = dropTask(async (event) => {
+  @action
+  setReason(event) {
+    this.reason = event.target.value;
+  }
+
+  submitRequestTask = dropTask(async (event) => {
     event.preventDefault();
+    if (this.saveBlocked) {
+      return;
+    }
+    this.saveError = null;
 
-    const {
-      organization: currentOrganization,
-      changeEvent,
-      decision,
-      decisionActivity,
-    } = this.model;
+    const { organization, changeEvent, decision } = this.model;
 
-    const shouldSaveDecision = await changeEvent.requiresDecisionInformation;
-
-    await changeEvent.validate();
-
-    if (shouldSaveDecision) {
-      await decision.validate();
+    if (changeEvent.requiresDecisionInformation) {
+      decision.documentLinks = decision.documentLinks.filter((link) =>
+        link.trim(),
+      );
     }
 
-    const isLegalFormChange =
-      changeEvent.type?.id === CHANGE_EVENT_TYPE.LEGAL_FORM_CHANGE;
-    if (isLegalFormChange && !this.selectedResultingLegalForm) {
+    await changeEvent.validate();
+    if (changeEvent.requiresDecisionInformation) {
+      await decision.validate();
+    }
+    if (this.isLegalFormChange && !this.selectedResultingLegalForm) {
       changeEvent.addError(
         'resultingLegalForm',
         'Selecteer een juridische vorm',
       );
     }
-
     if (
       changeEvent.isWerkingsgebiedChangeEvent &&
       this.selectedResultingLocations.length === 0
@@ -233,7 +168,6 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
         'Selecteer minstens één werkingsgebied',
       );
     }
-
     if (
       isAdditionalQualificationChangeEvent(changeEvent) &&
       this.selectedResultingAdditionalQualifications.length === 0
@@ -243,274 +177,225 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
         'Selecteer een optie',
       );
     }
-
-    if (isNameChange(changeEvent.type) && !this.resultingName) {
+    if (isNameChangeType(changeEvent.type) && !this.resultingName) {
       changeEvent.addError('resultingName', 'Vul de nieuwe naam in');
     }
-
-    if (!changeEvent.error && (shouldSaveDecision ? !decision.error : true)) {
-      changeEvent.decision = await saveDecision(
-        shouldSaveDecision,
-        decision,
-        decisionActivity,
-        this.store,
-      );
-
-      // We save the change event already so the backend assigns it an id
-      // which is needed when saving the change-event-results
-      await this.store.request(saveRecord(changeEvent));
-
-      if (changeEvent.canAffectMultipleOrganizations) {
-        const allOriginalOrganizations = (
-          await changeEvent.originalOrganizations
-        ).slice();
-
-        const createChangeEventResultsPromises = [];
-
-        // We create change event results for all organizations that are
-        // affected by the new change event
-        for (let organization of allOriginalOrganizations) {
-          let resultingStatusId;
-
-          if (changeEvent.isMergerChangeEvent) {
-            if (currentOrganization.isCentralWorshipService) {
-              resultingStatusId = ORGANIZATION_STATUS.INACTIVE;
-            } else {
-              resultingStatusId = (
-                await changeEvent.resultingOrganizations
-              ).includes(organization)
-                ? ORGANIZATION_STATUS.ACTIVE
-                : ORGANIZATION_STATUS.INACTIVE;
-            }
-          } else {
-            resultingStatusId =
-              RESULTING_STATUS_FOR_CHANGE_EVENT_TYPE[changeEvent.type.id];
-          }
-
-          createChangeEventResultsPromises.push(
-            createChangeEventResult({
-              resultingStatusId,
-              resultingOrganization: organization,
-              changeEvent,
-              store: this.store,
-            }),
-          );
-        }
-
-        if (changeEvent.isMergerChangeEvent) {
-          if (currentOrganization.isCentralWorshipService) {
-            // Central worship services should always select a *new*
-            // organization as the resulting organization, so we also create a
-            // change event result for that organization
-            for (let organization of (
-              await changeEvent.resultingOrganizations
-            ).slice()) {
-              createChangeEventResultsPromises.push(
-                createChangeEventResult({
-                  resultingStatusId: ORGANIZATION_STATUS.ACTIVE,
-                  resultingOrganization: organization,
-                  changeEvent,
-                  store: this.store,
-                }),
-              );
-            }
-          }
-        } else {
-          (await changeEvent.resultingOrganizations).push(
-            ...allOriginalOrganizations,
-          );
-        }
-
-        await Promise.all(createChangeEventResultsPromises);
-      } else {
-        if (changeEvent.requiresDecisionInformation) {
-          await changeEvent.addOriginalOrganization(currentOrganization);
-        }
-
-        if (
-          ![
-            CHANGE_EVENT_TYPE.RECOGNITION_LIFTED,
-            CHANGE_EVENT_TYPE.RECOGNITION_NOT_GRANTED,
-          ].includes(changeEvent.type.id)
-        ) {
-          (await changeEvent.resultingOrganizations).push(currentOrganization);
-        }
-
-        const resultingScope = changeEvent.isWerkingsgebiedChangeEvent
-          ? await this.scopeOfOperation.getScopeForLocations(
-              ...this.selectedResultingLocations,
-            )
-          : null;
-
-        const resultingStatusId =
-          RESULTING_STATUS_FOR_CHANGE_EVENT_TYPE[changeEvent.type.id] ??
-          (await currentOrganization.organizationStatus)?.id;
-
-        const resultingName = isNameChange(changeEvent.type)
-          ? this.resultingName
-          : null;
-
-        await createChangeEventResult({
-          resultingStatusId,
-          resultingOrganization: currentOrganization,
-          changeEvent,
-          store: this.store,
-          resultingLegalForm: this.selectedResultingLegalForm,
-          resultingScope,
-          resultingAdditionalQualifications:
-            this.selectedResultingAdditionalQualifications,
-          resultingName,
-        });
-      }
-
-      // Persist the original and resulting organization information
-      await this.store.request(saveRecord(changeEvent));
-
-      this.router.transitionTo(
-        'organizations.organization.change-events.details',
-        changeEvent.id,
-      );
+    if (this.hasValidationErrors) {
+      return;
     }
+
+    // What the event results in
+    let resultingStatus;
+    let resultingScope = null;
+    try {
+      const resultingStatusId =
+        RESULTING_STATUS_FOR_CHANGE_EVENT_TYPE[changeEvent.type.id] ??
+        (await organization.organizationStatus)?.id;
+      ({ content: resultingStatus } = await this.store.request(
+        findRecord('organization-status-code', resultingStatusId),
+      ));
+      if (changeEvent.isWerkingsgebiedChangeEvent) {
+        resultingScope = await this.scopeOfOperation.getScopeForLocations(
+          ...this.selectedResultingLocations,
+        );
+      }
+    } catch (error) {
+      this.saveError =
+        error.message ??
+        'De gevolgen van de veranderingsgebeurtenis konden niet bepaald worden.';
+      return;
+    }
+    const resultingLegalForm = this.isLegalFormChange
+      ? this.selectedResultingLegalForm
+      : null;
+    const resultingAdditionalQualifications =
+      isAdditionalQualificationChangeEvent(changeEvent)
+        ? this.selectedResultingAdditionalQualifications
+        : [];
+    const resultingName = isNameChangeType(changeEvent.type)
+      ? this.resultingName
+      : null;
+
+    const changeEventResult = this.store.createRecord('change-event-result', {
+      status: resultingStatus,
+      resultingLegalForm,
+      resultingScope,
+      resultingAdditionalQualifications,
+      resultingName,
+      resultingOrganization: organization,
+      resultFrom: changeEvent,
+    });
+    this.changeEventResult = changeEventResult;
+    changeEvent.resultingOrganizations = [organization];
+
+    // The organisation follows the event, unless a later event was recorded
+    // already (an event entered after the fact)
+    if (await this.isMostRecent(changeEvent, organization)) {
+      organization.organizationStatus = resultingStatus;
+      if (resultingLegalForm) {
+        organization.legalForm = resultingLegalForm;
+      }
+      if (resultingScope) {
+        organization.scope = resultingScope;
+      }
+      if (resultingAdditionalQualifications.length > 0) {
+        organization.additionalQualifications =
+          resultingAdditionalQualifications;
+      }
+      if (resultingName) {
+        organization.setAbbName(resultingName);
+      }
+    }
+
+    // The besluit, when the type asks for one and it was filled in; set on
+    // every attempt, as the links may have been cleared since the last one
+    const records = [];
+    const withDecision =
+      changeEvent.requiresDecisionInformation && !decision.isEmpty;
+    changeEvent.decision = withDecision ? decision : null;
+    if (withDecision) {
+      records.push(decision);
+    }
+    records.push(changeEvent, changeEventResult, organization);
+
+    let saved;
+    try {
+      saved = await this.changeRequests.submit(
+        'change-event',
+        organization.id,
+        records,
+        { reason: this.reason.trim() || null },
+      );
+    } catch (error) {
+      if (!(error instanceof ChangeRequestError)) {
+        throw error;
+      }
+      if (error.applied) {
+        // ABB's request is applied, but the page could not follow it up:
+        // the overview loads the events as they are now
+        this.toaster.warning(error.message, 'Wijziging doorgevoerd');
+        this.router.replaceWith('organizations.organization.change-events');
+        return;
+      }
+      if (error.applyFailed && error.requestId) {
+        // ABB's request is kept, but applying it failed: the request page
+        // shows why
+        this.toaster.warning(error.message, 'Doorvoeren mislukt');
+        this.router.replaceWith('aanvragen.aanvraag', error.requestId);
+        return;
+      }
+      if (error.held && error.waiting && error.requestId) {
+        // Recorded: the request waits; the organisation is unchanged
+        if (this.appliesAtOnce) {
+          // ABB's own request waits when data it changes was changed
+          // meanwhile: ABB reviews the differences on the request page
+          this.toaster.warning(
+            'De veranderingsgebeurtenis is bewaard, maar nog niet doorgevoerd: intussen werden gegevens gewijzigd die ze ook wijzigt. Bekijk de verschillen en keur de aanvraag goed.',
+            'Aanvraag wacht op goedkeuring',
+          );
+        } else {
+          this.toaster.success(
+            'De aanvraag is verstuurd en wordt gevalideerd door ABB. De gegevens van de organisatie veranderen na goedkeuring.',
+            'Aanvraag verstuurd',
+          );
+        }
+        this.router.replaceWith('aanvragen.aanvraag', error.requestId);
+        return;
+      }
+      if (error.held) {
+        // Not recorded, and the records of the form are gone: the page
+        // must be reloaded
+        this.saveError = error.message;
+        this.saveBlocked = true;
+        return;
+      }
+      // Nothing is applied: the organisation goes back to what was loaded,
+      // so that another attempt starts from it. When the outcome is unknown
+      // only a reload tells whether one is needed.
+      this.discardAttempt();
+      this.saveError = error.outcomeUnknown
+        ? OUTCOME_UNKNOWN_MESSAGE
+        : error.message;
+      this.saveBlocked = error.outcomeUnknown;
+      return;
+    }
+
+    // ABB's request is applied at once: the event exists
+    this.router.replaceWith(
+      'organizations.organization.change-events.details',
+      saved.get(changeEvent).id,
+    );
   });
 
+  /**
+   * Whether no later change event of the organisation is recorded yet, so
+   * the event is the one the organisation's current fields follow.
+   */
+  async isMostRecent(changeEvent, organization) {
+    const { content: results } = await this.store.request(
+      queryBuilder('change-event-result', {
+        'filter[resulting-organization][:id:]': organization.id,
+        include: 'result-from',
+        page: { size: 1 },
+        sort: '-result-from.date',
+      }),
+    );
+    const mostRecent = results.length ? await results.at(0).resultFrom : null;
+    return (
+      !mostRecent || !mostRecent.date || mostRecent.date <= changeEvent.date
+    );
+  }
+
+  /**
+   * Undo what an attempt that was not applied did to the records of the
+   * page, so that a new one starts from the organisation as it was loaded:
+   * the result it created and the fields of the organisation the event
+   * changed. Rolling back the organisation's relationships also takes it
+   * out of the event's organisations (their inverse); the event is about it
+   * all the same.
+   */
+  discardAttempt() {
+    const { organization, changeEvent } = this.model;
+    unloadNew(this.changeEventResult);
+    this.changeEventResult = null;
+    this.changeRequests.rollbackRelationships(organization);
+    organization.rollbackAttributes();
+    changeEvent.originalOrganizations = [organization];
+  }
+
   reset() {
-    this.model.changeEvent.reset();
-    this.model.decision?.reset();
-    this.model.decisionActivity?.rollbackAttributes();
-    this.model.organization.reset();
-    this.selectedResultingOrganization = null;
+    const { organization, changeEvent, decision } = this.model;
+    // The organisation keeps nothing of a request that was not applied
+    if (isLoaded(organization)) {
+      this.changeRequests.rollbackRelationships(organization);
+      organization.rollbackAttributes();
+    }
+    for (const record of [changeEvent, decision, this.changeEventResult]) {
+      unloadNew(record);
+    }
+    this.changeEventResult = null;
     this.selectedResultingLegalForm = null;
     this.selectedResultingLocations = [];
     this.selectedResultingAdditionalQualifications = [];
     this.resultingName = null;
+    this.reason = '';
+    this.saveError = null;
+    this.saveBlocked = false;
   }
 }
 
-async function createChangeEventResult({
-  resultingStatusId,
-  resultingOrganization,
-  changeEvent,
-  store,
-  resultingLegalForm = null,
-  resultingScope = null,
-  resultingAdditionalQualifications = [],
-  resultingName,
-}) {
-  const { content: resultingStatus } = await store.request(
-    findRecord('organization-status-code', resultingStatusId),
-  );
+/**
+ * The message for an attempt whose outcome is unknown.
+ */
+const OUTCOME_UNKNOWN_MESSAGE =
+  'Het is niet zeker of je aanvraag werd verwerkt. Herlaad de pagina en kijk onder "Alle aanvragen" of ze werd ontvangen voor je ze opnieuw verstuurt.';
 
-  let mostRecentChangeEvent = await findMostRecentChangeEvent(
-    store,
-    resultingOrganization,
-  );
-
-  if (
-    !mostRecentChangeEvent ||
-    !mostRecentChangeEvent.date ||
-    mostRecentChangeEvent.date <= changeEvent.date
-  ) {
-    // This is the first change event or the new change event is newer
-    // so we should update the organization status as well
-
-    const previousStatus = await resultingOrganization.organizationStatus;
-    resultingOrganization.organizationStatus = resultingStatus;
-
-    if (resultingLegalForm) {
-      resultingOrganization.legalForm = resultingLegalForm;
-    }
-
-    if (resultingScope) {
-      resultingOrganization.scope = resultingScope;
-    }
-
-    if (resultingAdditionalQualifications.length > 0) {
-      resultingOrganization.additionalQualifications =
-        resultingAdditionalQualifications;
-    }
-
-    await store.request(saveRecord(resultingOrganization));
-
-    if (
-      resultingOrganization.isWorshipService &&
-      previousStatus?.id === ORGANIZATION_STATUS.IN_FORMATION &&
-      (resultingStatusId === ORGANIZATION_STATUS.ACTIVE ||
-        resultingStatusId === ORGANIZATION_STATUS.INACTIVE) &&
-      RECOGNITION_CHANGE_TYPES.includes(changeEvent.type.id)
-    ) {
-      const constructRelationshipsEndpoint = `/construct-organization-relationships/update-relationships/${resultingOrganization.id}`;
-      const response = await fetch(constructRelationshipsEndpoint, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/vnd.api+json',
-          'Content-Type': 'application/vnd.api+json',
-        },
-        body: JSON.stringify({ date: changeEvent.date?.toISOString() }),
-      });
-      if (!response.ok) {
-        throw new Error(
-          `Failed to update the governing body relationships for organization ${resultingOrganization.id}`,
-        );
-      }
-    }
-  }
-
-  let changeEventResult = store.createRecord('change-event-result');
-  changeEventResult.status = resultingStatus;
-  if (resultingLegalForm) {
-    changeEventResult.resultingLegalForm = resultingLegalForm;
-  }
-  if (resultingScope) {
-    changeEventResult.resultingScope = resultingScope;
-  }
-  if (resultingAdditionalQualifications.length > 0) {
-    changeEventResult.resultingAdditionalQualifications =
-      resultingAdditionalQualifications;
-  }
-  if (resultingName) {
-    changeEventResult.resultingName = resultingName;
-  }
-
-  changeEventResult.resultingOrganization = resultingOrganization;
-  changeEventResult.resultFrom = changeEvent;
-  await store.request(saveRecord(changeEventResult));
-}
-
-async function findMostRecentChangeEvent(store, organization) {
-  const { content: mostRecentChangeEventResults } = await store.request(
-    queryBuilder('change-event-result', {
-      'filter[resulting-organization][:id:]': organization.id,
-      include: ['result-from', 'resulting-organization'].join(),
-      page: {
-        size: 1,
-      },
-      sort: '-result-from.date',
-    }),
-  );
-
-  if (mostRecentChangeEventResults.length > 0) {
-    return await mostRecentChangeEventResults.at(0)?.resultFrom;
-  } else {
-    return null;
-  }
-}
-
-async function saveDecision(
-  shouldSaveDecision,
-  decision,
-  decisionActivity,
-  store,
-) {
-  if (shouldSaveDecision) {
-    if (!decision.isEmpty || decisionActivity.endDate) {
-      if (decisionActivity.endDate) {
-        await store.request(saveRecord(decisionActivity));
-        decision.hasDecisionActivity = decisionActivity;
-      }
-      await store.request(saveRecord(decision));
-      return decision;
-    }
-  } else {
-    return null;
+/**
+ * Drop a record the page created and nothing saved.
+ */
+function unloadNew(record) {
+  if (isLoaded(record) && record.isNew) {
+    record.deleteRecord();
+    record.unloadRecord();
   }
 }

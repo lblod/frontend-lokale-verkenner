@@ -1,0 +1,7 @@
+{{! A value of a conflict, as `valueParts` of the step modal splits it: texts and references to records, which are named. Arguments: `@parts`, `@operations` (of the request, to name the records it creates). }}
+{{#each @parts as |part index|}}{{if index ", "}}{{#if
+    part.reference
+  }}<ChangeRequests::ResourceReference
+      @reference={{part.reference}}
+      @operations={{@operations}}
+    />{{else}}{{part.text}}{{/if}}{{/each}}

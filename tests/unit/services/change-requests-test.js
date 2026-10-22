@@ -1309,6 +1309,305 @@ module('Unit | Service | change-requests', function (hooks) {
     });
   });
 
+  module('a creation', function () {
+    test('a request without target carries no target relationship and keeps the reason', async function (assert) {
+      const organization = this.store.createRecord('administrative-unit', {
+        legalName: 'AGB Test',
+      });
+      this.fetch.resolves(
+        jsonResponse(201, {
+          data: {
+            type: 'change-requests',
+            id: REQUEST_ID,
+            attributes: { status: 'ingediend', aggregate: 'new-organisation' },
+          },
+        }),
+      );
+
+      const error = await rejection(
+        this.service.submit('new-organisation', null, [organization], {
+          reason: 'Opgericht bij besluit',
+        }),
+      );
+
+      const document = JSON.parse(this.fetch.lastCall.args[1].body);
+      assert.strictEqual(document.data.relationships, undefined, 'no target');
+      assert.strictEqual(
+        document.data.attributes.aggregate,
+        'new-organisation',
+      );
+      assert.strictEqual(
+        document.data.attributes.reason,
+        'Opgericht bij besluit',
+      );
+      assert.strictEqual(document.data.attributes.operations[0].op, 'create');
+      assert.true(error.held);
+      assert.true(error.waiting, 'it waits for ABB');
+      assert.strictEqual(error.requestId, REQUEST_ID);
+      assert.true(
+        organization.isDestroying,
+        'the new record exists in the request only',
+      );
+    });
+  });
+
+  module('listing and deciding', function () {
+    const DOCUMENT = {
+      type: 'change-requests',
+      id: REQUEST_ID,
+      attributes: { status: 'ingediend', kind: 'creation', steps: [] },
+      relationships: {
+        target: {
+          data: { type: 'organizations', id: 'org-new' },
+          meta: { pending: true },
+        },
+        'requesting-organisation': {
+          data: { type: 'organizations', id: 'org-1' },
+        },
+      },
+    };
+
+    function errorResponse(status, error) {
+      return jsonResponse(status, {
+        errors: [{ status: String(status), title: 'Refused', ...error }],
+      });
+    }
+
+    test('list asks one page with the filters as the service names them and returns the documents with the total', async function (assert) {
+      this.fetch.resolves(
+        jsonResponse(200, {
+          data: [DOCUMENT],
+          meta: { count: 7 },
+          links: { first: '/change-requests?page[number]=0' },
+        }),
+      );
+
+      const result = await this.service.list({
+        kind: 'creation',
+        mine: true,
+        requester: 'org-1',
+        target: 'org-new',
+        targetClassification: 'cls-1',
+        status: 'ingediend,informatie-gevraagd',
+        createdFrom: '2026-10-01T00:00:00.000Z',
+        createdUntil: '2026-10-31T23:59:59.999Z',
+        sort: '-created',
+        page: 2,
+        size: 10,
+      });
+
+      const [url, options] = this.fetch.lastCall.args;
+      const query = new URL(url, 'http://test').searchParams;
+      assert.deepEqual(Object.fromEntries(query), {
+        'filter[kind]': 'creation',
+        'filter[mine]': 'true',
+        'filter[requester]': 'org-1',
+        'filter[target]': 'org-new',
+        'filter[target-classification]': 'cls-1',
+        'filter[status]': 'ingediend,informatie-gevraagd',
+        'filter[created][gte]': '2026-10-01T00:00:00.000Z',
+        'filter[created][lte]': '2026-10-31T23:59:59.999Z',
+        sort: '-created',
+        'page[number]': '2',
+        'page[size]': '10',
+      });
+      assert.true(url.startsWith('/change-requests?'));
+      assert.strictEqual(options.headers.Accept, 'application/vnd.api+json');
+      assert.deepEqual(result, {
+        requests: [DOCUMENT],
+        count: 7,
+        links: { first: '/change-requests?page[number]=0' },
+      });
+    });
+
+    test('list without filters asks the first page of everything; a refused listing is an error with a message', async function (assert) {
+      this.fetch.resolves(jsonResponse(200, { data: [], meta: { count: 0 } }));
+
+      const result = await this.service.list();
+
+      const [url] = this.fetch.lastCall.args;
+      assert.deepEqual(
+        Object.fromEntries(new URL(url, 'http://test').searchParams),
+        { 'page[number]': '0', 'page[size]': '20' },
+      );
+      assert.deepEqual(result, { requests: [], count: 0, links: {} });
+
+      this.fetch.resolves(
+        errorResponse(400, { detail: 'filter[kind]: unknown value "foo"' }),
+      );
+      let error = await rejection(this.service.list({ kind: 'foo' }));
+      assert.true(error instanceof ChangeRequestError);
+      assert.strictEqual(error.status, 400);
+      assert.strictEqual(
+        error.message,
+        'De filters zijn ongeldig. Herstel de filters en probeer opnieuw.',
+      );
+
+      this.fetch.rejects(new TypeError('Failed to fetch'));
+      error = await rejection(this.service.list());
+      assert.true(
+        error.message.startsWith('De aanvragen konden niet opgehaald'),
+      );
+    });
+
+    test('find returns the document of a request and says when it is not found', async function (assert) {
+      this.fetch.resolves(jsonResponse(200, { data: DOCUMENT }));
+
+      const document = await this.service.find(REQUEST_ID);
+
+      assert.strictEqual(
+        this.fetch.lastCall.args[0],
+        `/change-requests/${REQUEST_ID}`,
+      );
+      assert.deepEqual(document, DOCUMENT);
+
+      this.fetch.resolves(errorResponse(404, { detail: 'No such request' }));
+      const error = await rejection(this.service.find(REQUEST_ID));
+      assert.strictEqual(error.status, 404);
+      assert.strictEqual(error.message, 'De aanvraag werd niet gevonden.');
+    });
+
+    test('takeDecision posts the step with its text and override and returns the updated request', async function (assert) {
+      const updated = {
+        ...DOCUMENT,
+        attributes: { ...DOCUMENT.attributes, status: 'afgekeurd' },
+      };
+      // A fresh Response per call: a body can be read once
+      this.fetch.callsFake(async () => jsonResponse(201, { data: updated }));
+
+      const document = await this.service.takeDecision(
+        REQUEST_ID,
+        'afkeuring',
+        {
+          reason: 'Het KBO-nummer klopt niet',
+        },
+      );
+
+      const [url, options] = this.fetch.lastCall.args;
+      assert.strictEqual(url, `/change-requests/${REQUEST_ID}/steps`);
+      assert.strictEqual(options.method, 'POST');
+      assert.deepEqual(JSON.parse(options.body), {
+        data: {
+          type: 'change-request-steps',
+          attributes: {
+            'step-type': 'afkeuring',
+            reason: 'Het KBO-nummer klopt niet',
+          },
+        },
+      });
+      assert.deepEqual(document, updated);
+
+      await this.service.takeDecision(REQUEST_ID, 'goedkeuring', {
+        override: '5ac5a8f6',
+      });
+      assert.deepEqual(
+        JSON.parse(this.fetch.lastCall.args[1].body).data.attributes,
+        {
+          'step-type': 'goedkeuring',
+          override: '5ac5a8f6',
+        },
+      );
+    });
+
+    test('takeDecision explains a refused step: no longer admitted, not allowed, or changed data with the conflicts to review', async function (assert) {
+      this.fetch.resolves(
+        errorResponse(409, {
+          detail: 'The status afgekeurd does not admit goedkeuring',
+          meta: { status: 'afgekeurd', 'step-type': 'goedkeuring' },
+        }),
+      );
+      let error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'goedkeuring'),
+      );
+      assert.true(error instanceof ChangeRequestError);
+      assert.strictEqual(
+        error.message,
+        'Deze stap is niet meer mogelijk: de aanvraag is intussen afgekeurd.',
+      );
+      assert.deepEqual(error.conflicts, []);
+
+      this.fetch.resolves(
+        errorResponse(403, { meta: { rule: null, rules: [] } }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'afkeuring', { reason: 'x' }),
+      );
+      assert.strictEqual(error.message, 'Je mag deze stap niet zetten.');
+
+      const conflicts = [
+        {
+          resource: { type: 'administrative-units', id: 'org-1' },
+          key: 'name',
+          base: 'Aalst',
+          current: 'Aalst (ABB)',
+          proposed: 'Stad Aalst',
+          'competing-requests': [],
+        },
+      ];
+      this.fetch.resolves(
+        errorResponse(409, {
+          detail: '1 conflict; approve with "override"',
+          meta: { conflicts, 'conflicts-token': '5ac5a8f6' },
+        }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'goedkeuring'),
+      );
+      assert.strictEqual(error.status, 409);
+      assert.deepEqual(error.conflicts, conflicts, 'the conflicts to review');
+      assert.strictEqual(
+        error.conflictsToken,
+        '5ac5a8f6',
+        'the token that overrides exactly them',
+      );
+      assert.true(error.message.includes('intussen gewijzigd'));
+
+      this.fetch.resolves(
+        errorResponse(422, { detail: 'an afkeuring needs a reason' }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'afkeuring'),
+      );
+      assert.strictEqual(
+        error.message,
+        'an afkeuring needs a reason',
+        'the detail of the service',
+      );
+    });
+
+    test('loadRights keeps what the session may do with requests, and nothing when the service does not answer', async function (assert) {
+      this.fetch.resolves(
+        jsonResponse(200, {
+          'can-create': ['http://example.org/classification/agb'],
+          'can-decide': false,
+        }),
+      );
+
+      const rights = await this.service.loadRights();
+
+      assert.strictEqual(
+        this.fetch.lastCall.args[0],
+        '/change-requests/permissions',
+      );
+      assert.deepEqual(rights, {
+        canDecide: false,
+        canCreate: ['http://example.org/classification/agb'],
+      });
+      assert.deepEqual(this.service.rights, rights, 'kept for the pages');
+
+      this.fetch.resolves(new Response('Bad Gateway', { status: 502 }));
+      sinon.stub(console, 'warn');
+      assert.deepEqual(await this.service.loadRights(), {
+        canDecide: false,
+        canCreate: [],
+      });
+      assert.deepEqual(this.service.rights, {
+        canDecide: false,
+        canCreate: [],
+      });
+    });
+  });
+
   module('permissions', function () {
     test('it returns whether the organisation may be edited and by which rules', async function (assert) {
       this.fetch.resolves(
@@ -1890,6 +2189,573 @@ module('Unit | Service | change-requests', function (hooks) {
         },
       });
     });
+
+    test('new-organisation: an AGB with its KBO number, site, besluit and oprichting', async function (assert) {
+      const [classification, status, legalForm, oprichting, siteType] =
+        this.store.push({
+          data: [
+            {
+              type: 'administrative-unit-classification-code',
+              id: CLASSIFICATION.AGB.id,
+            },
+            { type: 'organization-status-code', id: 'status-active' },
+            { type: 'concept', id: 'legal-form-1' },
+            { type: 'change-event-type', id: 'type-oprichting' },
+            { type: 'site-type', id: 'site-type-zetel' },
+          ],
+        });
+      const organization = this.store.createRecord('administrative-unit', {
+        name: 'AGB Aalst',
+        legalName: 'AGB Aalst',
+        classification,
+        organizationStatus: status,
+        legalForm,
+      });
+      const kboStructured = this.store.createRecord('structured-identifier', {
+        localId: '0123456789',
+      });
+      const kboIdentifier = this.store.createRecord('identifier', {
+        idName: ID_NAME.KBO,
+        structuredIdentifier: kboStructured,
+      });
+      organization.identifiers = [kboIdentifier];
+      const address = this.store.createRecord('address', {
+        street: 'Grote Markt',
+        number: '1',
+        postcode: '9300',
+        municipality: 'Aalst',
+        country: 'België',
+        fullAddress: 'Grote Markt 1, 9300 Aalst, België',
+      });
+      const contact = createPrimaryContact(this.store);
+      contact.email = 'info@agb-aalst.be';
+      const secondaryContact = createSecondaryContact(this.store);
+      const site = this.store.createRecord('site', {
+        address,
+        contacts: [contact, secondaryContact],
+        siteType,
+      });
+      organization.primarySite = site;
+      const decision = this.store.createRecord('decision', {
+        documentLinks: ['https://aalst.be/besluiten/2026/123'],
+      });
+      const changeEvent = this.store.createRecord('change-event', {
+        type: oprichting,
+        description: 'Oprichting',
+        date: new Date(2026, 9, 1),
+        decision,
+        originalOrganizations: [organization],
+        resultingOrganizations: [organization],
+      });
+      const result = this.store.createRecord('change-event-result', {
+        status,
+        resultingOrganization: organization,
+        resultFrom: changeEvent,
+      });
+      waitForAbb(this.fetch, this.adapter);
+
+      await rejection(
+        this.service.submit(
+          'new-organisation',
+          null,
+          [
+            kboStructured,
+            kboIdentifier,
+            contact,
+            secondaryContact,
+            address,
+            site,
+            decision,
+            changeEvent,
+            result,
+            organization,
+          ],
+          { reason: 'Opgericht bij besluit van 1 oktober 2026' },
+        ),
+      );
+
+      assert.deepEqual(postedDocument(this.fetch), {
+        data: {
+          type: 'change-requests',
+          attributes: {
+            aggregate: 'new-organisation',
+            operations: [
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'local-id': '0123456789',
+                  },
+                  type: 'structured-identifiers',
+                  lid: 'lid-1',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'id-name': 'KBO nummer',
+                  },
+                  type: 'identifiers',
+                  lid: 'lid-2',
+                  relationships: {
+                    'structured-identifier': {
+                      data: {
+                        type: 'structured-identifiers',
+                        lid: 'lid-1',
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    email: 'info@agb-aalst.be',
+                    telephone: null,
+                    type: 'Primary',
+                    'harvest-date': null,
+                  },
+                  type: 'contact-points',
+                  lid: 'lid-3',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    telephone: null,
+                    type: 'Secondary',
+                    'harvest-date': null,
+                  },
+                  type: 'contact-points',
+                  lid: 'lid-4',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    number: '1',
+                    street: 'Grote Markt',
+                    postcode: '9300',
+                    municipality: 'Aalst',
+                    country: 'België',
+                    'full-address': 'Grote Markt 1, 9300 Aalst, België',
+                    'harvest-date': null,
+                  },
+                  type: 'addresses',
+                  lid: 'lid-5',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {},
+                  relationships: {
+                    contacts: {
+                      data: [
+                        {
+                          type: 'contact-points',
+                          lid: 'lid-3',
+                        },
+                        {
+                          type: 'contact-points',
+                          lid: 'lid-4',
+                        },
+                      ],
+                    },
+                    'site-type': {
+                      data: {
+                        type: 'site-types',
+                        id: 'site-type-zetel',
+                      },
+                    },
+                    address: {
+                      data: {
+                        type: 'addresses',
+                        lid: 'lid-5',
+                      },
+                    },
+                  },
+                  type: 'sites',
+                  lid: 'lid-6',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'publication-date': null,
+                    'document-links': ['https://aalst.be/besluiten/2026/123'],
+                  },
+                  type: 'decisions',
+                  lid: 'lid-7',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    date: '2026-10-01',
+                    description: 'Oprichting',
+                  },
+                  relationships: {
+                    type: {
+                      data: {
+                        type: 'change-event-types',
+                        id: 'type-oprichting',
+                      },
+                    },
+                    'resulting-organizations': {
+                      data: [
+                        {
+                          type: 'administrative-units',
+                          lid: 'lid-8',
+                        },
+                      ],
+                    },
+                    'original-organizations': {
+                      data: [
+                        {
+                          type: 'administrative-units',
+                          lid: 'lid-8',
+                        },
+                      ],
+                    },
+                    results: {
+                      data: [
+                        {
+                          type: 'change-event-results',
+                          lid: 'lid-9',
+                        },
+                      ],
+                    },
+                    decision: {
+                      data: {
+                        type: 'decisions',
+                        lid: 'lid-7',
+                      },
+                    },
+                  },
+                  type: 'change-events',
+                  lid: 'lid-10',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {},
+                  relationships: {
+                    status: {
+                      data: {
+                        type: 'organization-status-codes',
+                        id: 'status-active',
+                      },
+                    },
+                    'result-from': {
+                      data: {
+                        type: 'change-events',
+                        lid: 'lid-10',
+                      },
+                    },
+                    'resulting-organization': {
+                      data: {
+                        type: 'administrative-units',
+                        lid: 'lid-8',
+                      },
+                    },
+                  },
+                  type: 'change-event-results',
+                  lid: 'lid-9',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    name: 'AGB Aalst',
+                    'legal-name': 'AGB Aalst',
+                    'alternative-name': [],
+                    'expected-end-date': null,
+                  },
+                  relationships: {
+                    classification: {
+                      data: {
+                        type: 'administrative-unit-classification-codes',
+                        id: '36a82ba0-7ff1-4697-a9dd-2e94df73b721',
+                      },
+                    },
+                    'legal-form': {
+                      data: {
+                        type: 'concepts',
+                        id: 'legal-form-1',
+                      },
+                    },
+                    'organization-status': {
+                      data: {
+                        type: 'organization-status-codes',
+                        id: 'status-active',
+                      },
+                    },
+                    identifiers: {
+                      data: [
+                        {
+                          type: 'identifiers',
+                          lid: 'lid-2',
+                        },
+                      ],
+                    },
+                    'changed-by': {
+                      data: [
+                        {
+                          type: 'change-events',
+                          lid: 'lid-10',
+                        },
+                      ],
+                    },
+                    'resulted-from': {
+                      data: [
+                        {
+                          type: 'change-events',
+                          lid: 'lid-10',
+                        },
+                      ],
+                    },
+                    'primary-site': {
+                      data: {
+                        type: 'sites',
+                        lid: 'lid-6',
+                      },
+                    },
+                  },
+                  type: 'administrative-units',
+                  lid: 'lid-8',
+                },
+              },
+            ],
+            reason: 'Opgericht bij besluit van 1 oktober 2026',
+          },
+        },
+      });
+    });
+
+    test('change-event: a naamswijziging of a gemeente with its besluit', async function (assert) {
+      const [organization, status, nameChange] = this.store.push({
+        data: [
+          {
+            type: 'administrative-unit',
+            id: 'org-1',
+            attributes: { name: 'Aalst', legalName: 'Aalst' },
+            relationships: {
+              organizationStatus: {
+                data: { type: 'organization-status-code', id: 'status-active' },
+              },
+            },
+          },
+          { type: 'organization-status-code', id: 'status-active' },
+          { type: 'change-event-type', id: 'type-naamswijziging' },
+        ],
+      });
+      const decision = this.store.createRecord('decision', {
+        documentLinks: ['https://aalst.be/besluiten/2026/124'],
+      });
+      const changeEvent = this.store.createRecord('change-event', {
+        type: nameChange,
+        date: new Date(2026, 9, 1),
+        decision,
+        originalOrganizations: [organization],
+        resultingOrganizations: [organization],
+      });
+      const result = this.store.createRecord('change-event-result', {
+        resultingName: 'Stad Aalst',
+        status,
+        resultingOrganization: organization,
+        resultFrom: changeEvent,
+      });
+      organization.setAbbName('Stad Aalst');
+      waitForAbb(this.fetch, this.adapter);
+
+      await rejection(
+        this.service.submit(
+          'change-event',
+          'org-1',
+          [decision, changeEvent, result, organization],
+          { reason: 'Besluit van de gemeenteraad' },
+        ),
+      );
+
+      assert.deepEqual(postedDocument(this.fetch), {
+        data: {
+          type: 'change-requests',
+          attributes: {
+            aggregate: 'change-event',
+            operations: [
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'publication-date': null,
+                    'document-links': ['https://aalst.be/besluiten/2026/124'],
+                  },
+                  type: 'decisions',
+                  lid: 'lid-1',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    date: '2026-10-01',
+                  },
+                  relationships: {
+                    type: {
+                      data: {
+                        type: 'change-event-types',
+                        id: 'type-naamswijziging',
+                      },
+                    },
+                    'resulting-organizations': {
+                      data: [
+                        {
+                          type: 'administrative-units',
+                          id: 'org-1',
+                        },
+                      ],
+                    },
+                    'original-organizations': {
+                      data: [
+                        {
+                          type: 'administrative-units',
+                          id: 'org-1',
+                        },
+                      ],
+                    },
+                    results: {
+                      data: [
+                        {
+                          type: 'change-event-results',
+                          lid: 'lid-2',
+                        },
+                      ],
+                    },
+                    decision: {
+                      data: {
+                        type: 'decisions',
+                        lid: 'lid-1',
+                      },
+                    },
+                  },
+                  type: 'change-events',
+                  lid: 'lid-3',
+                },
+              },
+              {
+                op: 'create',
+                data: {
+                  attributes: {
+                    'resulting-name': 'Stad Aalst',
+                  },
+                  relationships: {
+                    status: {
+                      data: {
+                        type: 'organization-status-codes',
+                        id: 'status-active',
+                      },
+                    },
+                    'resulting-organization': {
+                      data: {
+                        type: 'administrative-units',
+                        id: 'org-1',
+                      },
+                    },
+                    'result-from': {
+                      data: {
+                        type: 'change-events',
+                        lid: 'lid-3',
+                      },
+                    },
+                  },
+                  type: 'change-event-results',
+                  lid: 'lid-2',
+                },
+              },
+              {
+                op: 'update',
+                data: {
+                  id: 'org-1',
+                  attributes: {
+                    name: 'Stad Aalst',
+                    'legal-name': 'Stad Aalst',
+                    'alternative-name': [],
+                    'expected-end-date': null,
+                  },
+                  relationships: {
+                    'organization-status': {
+                      data: {
+                        type: 'organization-status-codes',
+                        id: 'status-active',
+                      },
+                    },
+                    'changed-by': {
+                      data: [
+                        {
+                          type: 'change-events',
+                          lid: 'lid-3',
+                        },
+                      ],
+                    },
+                    'resulted-from': {
+                      data: [
+                        {
+                          type: 'change-events',
+                          lid: 'lid-3',
+                        },
+                      ],
+                    },
+                  },
+                  type: 'administrative-units',
+                  meta: {
+                    base: {
+                      attributes: {
+                        name: 'Aalst',
+                        'legal-name': 'Aalst',
+                        'alternative-name': [],
+                        'expected-end-date': null,
+                      },
+                      relationships: {
+                        'organization-status': {
+                          data: {
+                            type: 'organization-status-codes',
+                            id: 'status-active',
+                          },
+                        },
+                        'changed-by': {
+                          data: [],
+                        },
+                        'resulted-from': {
+                          data: [],
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+            reason: 'Besluit van de gemeenteraad',
+          },
+          relationships: {
+            target: {
+              data: {
+                type: 'organizations',
+                id: 'org-1',
+              },
+            },
+          },
+        },
+      });
+    });
   });
 
   module('answers without a stored request', function () {
@@ -1961,11 +2827,7 @@ module('Unit | Service | change-requests', function (hooks) {
       assert.strictEqual(organization.name, 'Stad Aalst', 'the edits are kept');
 
       const stepError = await rejection(
-        this.service.takeStep(
-          REQUEST_ID,
-          'intrekking',
-          'De stap kon niet verstuurd worden.',
-        ),
+        this.service.takeDecision(REQUEST_ID, 'intrekking'),
       );
       assert.false(
         stepError.outcomeUnknown,
@@ -2165,6 +3027,71 @@ module('Unit | Service | change-requests', function (hooks) {
         },
         'the base is what the server has',
       );
+    });
+  });
+
+  module('messages', function () {
+    function errorResponse(status, meta) {
+      return jsonResponse(status, {
+        errors: [{ status: String(status), title: 'Refused', meta }],
+      });
+    }
+
+    test('a step refused over a KBO number, or whose apply failed, is explained in Dutch', async function (assert) {
+      this.fetch.resolves(
+        errorResponse(409, {
+          'kbo-number': '0123456789',
+          organisation: { type: 'organizations', id: 'org-2' },
+        }),
+      );
+      let error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'goedkeuring'),
+      );
+      assert.strictEqual(
+        error.message,
+        'Er bestaat al een organisatie met dit KBO-nummer. Deze aanvraag kan daarom niet doorgevoerd worden.',
+      );
+
+      this.fetch.resolves(
+        errorResponse(409, {
+          'kbo-number': '0123456789',
+          'change-request': { id: 'other' },
+        }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'betwisting'),
+      );
+      assert.true(error.message.startsWith('Er wacht al een aanvraag'));
+      assert.false(error.applyFailed);
+
+      this.fetch.resolves(
+        errorResponse(409, {
+          'change-request': { id: REQUEST_ID, status: 'mislukt' },
+        }),
+      );
+      error = await rejection(
+        this.service.takeDecision(REQUEST_ID, 'goedkeuring'),
+      );
+      assert.true(error.applyFailed);
+      assert.strictEqual(
+        error.message,
+        'Het doorvoeren van de aanvraag mislukte. De aanvraag is bewaard met status "Mislukt".',
+      );
+    });
+
+    test('a request that cannot be fetched says why in Dutch', async function (assert) {
+      for (const [status, expected] of [
+        [404, 'De aanvraag werd niet gevonden.'],
+        [403, 'Je mag deze aanvraag niet bekijken.'],
+        [
+          503,
+          'De aanvraag kon niet opgehaald worden (HTTP 503). Probeer het later opnieuw.',
+        ],
+      ]) {
+        this.fetch.resolves(errorResponse(status, {}));
+        const error = await rejection(this.service.find(REQUEST_ID));
+        assert.strictEqual(error.message, expected);
+      }
     });
   });
 });
