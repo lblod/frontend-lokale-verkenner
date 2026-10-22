@@ -317,6 +317,46 @@ module(
       assert.strictEqual(this.controller.saveError, null);
     });
 
+    test('a KBO sync that fails does not fail the save: the change is applied, the page leaves', async function (assert) {
+      const { organization, structuredIdentifierKBO } = this.controller.model;
+      organization.name = 'Stad Test';
+      organization.legalName = 'Stad Test';
+      this.submit.resolves(
+        new Map([[structuredIdentifierKBO, structuredIdentifierKBO]]),
+      );
+      const warn = sinon.stub(console, 'warn');
+
+      // The service is not in the stack, or does not answer: the dispatcher
+      // answers 500, or the request does not go out at all
+      for (const outcome of [
+        () => this.fetch.resolves(new Response(null, { status: 500 })),
+        () => this.fetch.rejects(new TypeError('Failed to fetch')),
+      ]) {
+        this.fetch.resetHistory();
+        this.transitionTo.resetHistory();
+        warn.resetHistory();
+        outcome();
+
+        await this.controller.save.perform({ preventDefault() {} });
+
+        assert.true(
+          this.fetch.calledOnceWith('/kbo-data-sync/structured-kbo', {
+            method: 'POST',
+          }),
+          'the sync was tried',
+        );
+        assert.true(warn.calledOnce, 'the failure is logged');
+        assert.true(
+          this.transitionTo.calledOnceWithExactly(
+            'organizations.organization.core-data',
+            'org-1',
+          ),
+          'the page leaves as after any save',
+        );
+        assert.strictEqual(this.controller.saveError, null);
+      }
+    });
+
     test('it creates the primary site with the address and contact points when the contact data is editable', async function (assert) {
       this.owner
         .lookup('service:features')
