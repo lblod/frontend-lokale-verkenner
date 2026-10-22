@@ -8,12 +8,15 @@ import isContactEditableOrganization from 'frontend-organization-portal/utils/ed
 
 export default class OrganizationsOrganizationSitesNewRoute extends Route {
   @service store;
-  @service currentSession;
+  @service changeRequests;
   @service router;
   @service features;
 
   beforeModel() {
-    if (!this.currentSession.canEdit) {
+    // The organisation of the transition, which may differ from the one on
+    // screen when the page is opened from elsewhere.
+    const { id } = this.paramsFor('organizations.organization');
+    if (!this.changeRequests.canEditOrganization(id)) {
       this.router.transitionTo('unauthorized');
     }
   }

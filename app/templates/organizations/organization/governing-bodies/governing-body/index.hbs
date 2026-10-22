@@ -8,21 +8,8 @@
       <:subtitle>{{@model.organization.abbName}}
         ({{@model.organization.classification.label}})</:subtitle>
       <:action>
-        <SecuredArea>
-          <:edit>
-            <AuLink
-              @route="organizations.organization.governing-bodies.governing-body.edit"
-              @skin="button-secondary"
-              @icon="pencil"
-              @iconAlignment="left"
-            >
-              Bewerk
-            </AuLink>
-          </:edit>
-          <:readOnly>
-            <ReportWrongData />
-          </:readOnly>
-        </SecuredArea>
+        {{! Bestuursorganen are mastered by LMB and read-only here }}
+        <ReportWrongData />
       </:action>
     </PageHeader>
 

@@ -2,13 +2,13 @@ import Route from '@ember/routing/route';
 import { service } from '@ember/service';
 
 export default class OrganizationsOrganizationGoverningBodiesGoverningBodyEditRoute extends Route {
-  @service currentSession;
   @service router;
 
   beforeModel() {
-    if (!this.currentSession.canEdit) {
-      this.router.transitionTo('unauthorized');
-    }
+    // Bestuursorganen are mastered by LMB and read-only here: this page is
+    // not switched to change requests and its saves would be refused by the
+    // backend. Nothing links to it; it never opens.
+    this.router.transitionTo('unauthorized');
   }
 
   async model() {

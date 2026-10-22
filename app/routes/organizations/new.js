@@ -10,13 +10,14 @@ import { MEMBERSHIP_ROLES } from '../../models/membership-role';
 
 export default class OrganizationsNewRoute extends Route {
   @service store;
-  @service currentSession;
   @service router;
 
   beforeModel() {
-    if (!this.currentSession.canEdit) {
-      this.router.transitionTo('unauthorized');
-    }
+    // Organisations are not created in this application: every edit is a
+    // change request about an existing organisation. The route is kept for
+    // when creation gets its own flow; until then nothing links to it and it
+    // never opens.
+    this.router.transitionTo('unauthorized');
   }
 
   async model() {

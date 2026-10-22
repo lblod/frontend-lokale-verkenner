@@ -4,7 +4,6 @@ import { query as queryBuilder } from '@warp-drive/legacy/compat/builders';
 import getFiltersForRoleLabel from 'frontend-organization-portal/utils/get-filters-for-role-label';
 
 export default class OrganizationsOrganizationRelatedOrganizationsEditRoute extends Route {
-  @service currentSession;
   @service router;
   @service store;
 
@@ -15,9 +14,10 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditRoute exte
   };
 
   beforeModel() {
-    if (!this.currentSession.canEdit) {
-      this.router.transitionTo('unauthorized');
-    }
+    // Not switched to change requests: the saves of this page go straight to
+    // the resource routes, which the backend refuses. Nothing links to it
+    // until it is switched; it never opens.
+    this.router.transitionTo('unauthorized');
   }
 
   async model(params) {

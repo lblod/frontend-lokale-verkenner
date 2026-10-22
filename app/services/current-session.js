@@ -2,13 +2,6 @@ import Service, { service } from '@ember/service';
 import { findRecord } from '@warp-drive/legacy/compat/builders';
 import { tracked } from '@glimmer/tracking';
 
-const EDITOR_ROLES = [
-  'ABBOrganisatiePortaalGebruiker-editeerder',
-  'ABBOrganisatiePortaalErediensten-editeerder',
-  'ABBOrganisatiePortaalGebruiker-beheerder',
-  'ABBOrganisatiePortaalErediensten-beheerder',
-];
-
 const WORSHIP_ROLES = [
   'ABBOrganisatiePortaalErediensten-beheerder',
   'ABBOrganisatiePortaalErediensten-editeerder',
@@ -21,15 +14,11 @@ const UNIT_ROLES = [
   'ABBOrganisatiePortaalGebruiker-lezer',
 ];
 
-const READER_ROLES = [
-  'ABBOrganisatiePortaalErediensten-lezer',
-  'ABBOrganisatiePortaalGebruiker-lezer',
-];
-
 export default class CurrentSessionService extends Service {
   @service session;
   @service store;
   @service role;
+  @service changeRequests;
 
   @tracked account;
   @tracked user;
@@ -71,6 +60,27 @@ export default class CurrentSessionService extends Service {
       }
     }
   }
+
+  /**
+   * The uuid of the organisation the session acts for. The login service
+   * links the session to the organisation the user logged in for
+   * (`ext:sessionGroup`), which the session document carries as its `group`
+   * relationship (the `groups` resource in config/resources/auth.json of the
+   * backend). The change-request service decides from that same session which
+   * organisations may be edited, so the frontend only asks it, see
+   * `canEdit`.
+   */
+  get organizationId() {
+    return this.session.data?.authenticated?.relationships?.group?.data?.id;
+  }
+
+  /**
+   * The organisation the session acts for (the session's group, loaded in `load`).
+   */
+  get organization() {
+    return this.group;
+  }
+
   get hasWorshipRole() {
     return WORSHIP_ROLES.includes(this.role.activeRole);
   }
@@ -79,11 +89,19 @@ export default class CurrentSessionService extends Service {
     return UNIT_ROLES.includes(this.role.activeRole);
   }
 
+  /**
+   * Whether the session may edit the organisation whose pages are open. The
+   * answer comes from the change-request service and is loaded by the
+   * organisation route, which also says which organisation is open, so it is
+   * false outside the organisation pages and during a transition into one
+   * (the edit-route guards ask `changeRequests.canEditOrganization` for the
+   * organisation of their transition instead).
+   */
   get canEdit() {
-    return EDITOR_ROLES.includes(this.role.activeRole);
+    return this.changeRequests.canEdit;
   }
 
   get canOnlyRead() {
-    return READER_ROLES.includes(this.role.activeRole);
+    return !this.canEdit;
   }
 }

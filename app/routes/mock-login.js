@@ -23,8 +23,11 @@ export default class MockLoginRoute extends Route {
     let filter = {
       provider: 'https://github.com/lblod/mock-login-service',
     };
+    // The organisation data is for logged-in sessions: an account is found
+    // by its person, whose names are the classification and the name of the
+    // organisation (see the migration that adds the mock accounts)
     if (params.organisatie) {
-      filter.user = { organizations: params.organisatie };
+      filter.user = params.organisatie;
     }
 
     let { content: accounts } = await this.store.request(

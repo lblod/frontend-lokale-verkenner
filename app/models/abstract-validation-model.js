@@ -1,5 +1,6 @@
 import { tracked } from '@glimmer/tracking';
 import { assert } from '@ember/debug';
+import { recordIdentifierFor } from '@warp-drive/core';
 import Model from '@warp-drive/legacy/model';
 
 /**
@@ -93,17 +94,33 @@ export default class AbstractValidationModel extends Model {
   }
 
   /**
-   * Reset the model to its original state.
+   * Reset the model to its original state: its attributes and, for a record
+   * the backend has, its relationships. `rollbackAttributes` covers the
+   * attributes only, so a relationship a cancelled page changed (a
+   * juridische vorm, a theme) would stay changed in the store, and the next
+   * change request about the record would carry it. A new record is
+   * unloaded by `rollbackAttributes`.
    * @returns {void}
    * @see https://guides.emberjs.com/release/models/#toc_rolling-back-attributes
    */
   reset() {
     this.#resetValidationErrors();
+    if (!this.isNew) {
+      this.store.cache.rollbackRelationships(recordIdentifierFor(this));
+    }
     this.rollbackAttributes();
   }
 
   resetErrors() {
     this.#resetValidationErrors();
+  }
+
+  removeError(propName) {
+    if (!this._validationError?.[propName]) return;
+
+    const errors = { ...this._validationError };
+    delete errors[propName];
+    this._validationError = Object.keys(errors).length ? errors : undefined;
   }
 
   addError(propName, errorMessage) {

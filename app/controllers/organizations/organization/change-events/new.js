@@ -79,11 +79,6 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
     );
   }
 
-  // TODO: replace this with a `url-for` helper.
-  get organizationCreationUrl() {
-    return this.router.urlFor('organizations.new');
-  }
-
   @action
   filterSelectedOriginalOrganizations(searchResults) {
     const originalOrganizations =
