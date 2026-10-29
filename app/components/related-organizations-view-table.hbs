@@ -19,7 +19,7 @@
         </AuToggleSwitch>
 
         <MembershipRoleSelect
-          @options={{@model.roles}}
+          @options={{@model.selectableRoleLabels}}
           @selected={{@selectedRole}}
           @onChange={{fn (mut @selectedRole)}}
           @allowClear={{true}}
@@ -46,7 +46,22 @@
         @currentSorting={{@sort}}
       />
       {{! TODO: Use same grey as other non-sorted columns}}
-      <th>Status</th>
+      <th>Status organisatie</th>
+      <AuDataTableThSortable
+        @field="start-date"
+        @label="Startdatum relatie"
+        @currentSorting={{@sort}}
+      />
+      <AuDataTableThSortable
+        @field="end-date"
+        @label="Einddatum relatie"
+        @currentSorting={{@sort}}
+      />
+      <AuDataTableThSortable
+        @field="relation-status"
+        @label="Status relatie"
+        @currentSorting={{@sort}}
+      />
     </c.header>
 
     <c.body as |organization|>
@@ -57,17 +72,33 @@
         {{organization.organizationType}}
       </td>
       <td>
-        <AuLink
-          @route="organizations.organization"
-          @model={{organization.organizationId}}
-        >
+        {{#if organization.isSpecialOrganization}}
           {{organization.organizationName}}
-        </AuLink>
+        {{else}}
+          <AuLink
+            @route="organizations.organization"
+            @model={{organization.organizationId}}
+          >
+            {{organization.organizationName}}
+          </AuLink>
+        {{/if}}
       </td>
       <td>
         <OrganizationStatus
           @id={{organization.organizationStatus.id}}
           @label={{organization.organizationStatus.label}}
+        />
+      </td>
+      <td>
+        {{if organization.startDate (date-format organization.startDate)}}
+      </td>
+      <td>
+        {{if organization.endDate (date-format organization.endDate)}}
+      </td>
+      <td>
+        <OrganizationStatus
+          @id={{organization.relationStatus.id}}
+          @label={{organization.relationStatus.label}}
         />
       </td>
     </c.body>

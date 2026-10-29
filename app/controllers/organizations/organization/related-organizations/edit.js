@@ -3,8 +3,16 @@ import { dropTask } from 'ember-concurrency';
 import { service } from '@ember/service';
 import { action } from '@ember/object';
 import { tracked } from '@glimmer/tracking';
-import { saveRecord } from '@warp-drive/legacy/compat/builders';
-import { shouldSwapAssignments } from 'frontend-organization-portal/constants/memberships';
+import { recordIdentifierFor } from '@warp-drive/core';
+import {
+  query as queryBuilder,
+  saveRecord,
+} from '@warp-drive/legacy/compat/builders';
+import {
+  removingMembershipBreaksMinimum,
+  shouldSwapAssignments,
+} from 'frontend-organization-portal/utils/membership-rules';
+import { isEmptyPeriod } from 'frontend-organization-portal/utils/period-of-time';
 
 export default class OrganizationsOrganizationRelatedOrganizationsEditController extends Controller {
   @service router;
@@ -20,22 +28,35 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
 
   @tracked founderToRemove;
 
+  @tracked membershipRemovalError;
+
   @tracked nonActiveMembership;
   @tracked nonActiveRelatedOrganization;
 
   get hasValidationErrors() {
-    return this.memberships.some((membership) => membership.error);
+    // Removed rows are hidden, so their errors can never be shown; they are
+    // deleted regardless of their fields and must not block the save.
+    return this.memberships.some(
+      (membership) =>
+        !membership.isDeleted && (membership.error || membership.during?.error),
+    );
   }
 
   get hasUnsavedEdits() {
-    return this.memberships.some(
-      (membership) => membership.isNew || membership.isDeleted,
-    );
+    return this.memberships.some((membership) => {
+      const period = membership.during;
+      return (
+        membership.isNew ||
+        membership.isDeleted ||
+        period?.isNew ||
+        period?.hasDirtyAttributes
+      );
+    });
   }
 
   setup() {
     if (!this.memberships) {
-      this.memberships = this.model.memberships.map((e) => e);
+      this.memberships = this.model.memberships;
     }
     if (this.memberships.length === 0) {
       this.addMembership();
@@ -48,14 +69,108 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
     this.memberships = [...this.memberships, membership];
   }
 
-  @action
-  removeMembership(membership) {
+  // A drop task, so a second click supersedes a removal that is still
+  // fetching the other organization's memberships instead of letting both
+  // open their confirmation.
+  removeMembership = dropTask(async (membership) => {
+    // A row that was added in this editing session was never stored, so
+    // removing it cannot take an organization below a minimum.
+    if (membership.isNew) {
+      this.founderToRemove = membership;
+      return;
+    }
+
+    // The organization being edited must keep meeting the minimum of the
+    // field the membership belongs to.
+    if (
+      removingMembershipBreaksMinimum(
+        membership,
+        this.model.organization,
+        this.memberships ?? [],
+      )
+    ) {
+      this.membershipRemovalError = this.#removalErrorFor('je organisatie');
+      return;
+    }
+
+    // The organization on the other side of the membership must keep meeting
+    // its minimums as well. Its memberships are not on this page, so they are
+    // fetched here.
+    const otherOrganization = this.#otherOrganizationOf(membership);
+    if (otherOrganization) {
+      const memberships = this.memberships;
+      const otherMemberships =
+        await this.#fetchMembershipsOf(otherOrganization);
+      // The page was left or re-entered while fetching: opening the
+      // confirmation now would attach it to whatever is shown next.
+      if (this.memberships !== memberships) return;
+      if (
+        otherMemberships &&
+        removingMembershipBreaksMinimum(
+          membership,
+          otherOrganization,
+          otherMemberships,
+        )
+      ) {
+        this.membershipRemovalError = this.#removalErrorFor(
+          otherOrganization.abbName,
+        );
+        return;
+      }
+    }
+
     this.founderToRemove = membership;
-  }
+  });
 
   @action
   cancelMembershipRemoval() {
     this.founderToRemove = undefined;
+  }
+
+  @action
+  dismissMembershipRemovalError() {
+    this.membershipRemovalError = null;
+  }
+
+  /**
+   * The organization on the other side of the given membership. `null` for a
+   * row that was added but never filled in completely.
+   */
+  #otherOrganizationOf(membership) {
+    const organization = this.model.organization;
+    return membership.belongsTo('member').value() === organization
+      ? membership.belongsTo('organization').value()
+      : membership.belongsTo('member').value();
+  }
+
+  /**
+   * The persisted memberships of the given organization, on both the
+   * `organization` and the `member` side. `null` if they could not be loaded:
+   * the page size matches the one this page loads for the organization being
+   * edited.
+   */
+  async #fetchMembershipsOf(organization) {
+    try {
+      const { content } = await this.store.request(
+        queryBuilder('membership', {
+          'filter[:or:][member][:id:]': organization.id,
+          'filter[:or:][organization][:id:]': organization.id,
+          include:
+            'role,member,organization,member.classification,organization.classification',
+          page: { size: 500, number: 0 },
+        }),
+      );
+      return content;
+    } catch {
+      // Without the memberships the minimum of the other organization cannot
+      // be checked. Allow the removal in that case, as it was before the
+      // other side of a removal was checked at all.
+      return null;
+    }
+  }
+
+  #removalErrorFor(organizationName) {
+    return `Je kan deze relatie niet verwijderen omdat ${organizationName} anders onder het vereiste minimum aantal relaties van dit type komt.`;
   }
 
   @action
@@ -74,6 +189,7 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
     //   Otherwise, they can result in failing validations or errors.
     if (membership.isNew) {
       this.memberships = this.memberships.filter((m) => m !== membership);
+      this.#rollbackPeriod(membership);
       membership.deleteRecord();
       membership.unloadRecord();
     } else {
@@ -117,17 +233,37 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
     }
   }
 
-  /**
-   * Whether none of the member, organization, or role have been set yet, as
-   * is the case for a row that was just added but never filled in by the
-   * user.
-   */
+  @action
+  setStartDate(membership, date) {
+    this.#setPeriodDate(membership, 'startDate', date);
+  }
+
+  @action
+  setEndDate(membership, date) {
+    this.#setPeriodDate(membership, 'endDate', date);
+  }
+
+  // Creates the period on the first date; clearing a date of a membership
+  // without period changes nothing
+  #setPeriodDate(membership, field, date) {
+    let period = membership.during;
+    if (!period) {
+      if (!date) {
+        return;
+      }
+      period = this.store.createRecord('period-of-time');
+      membership.during = period;
+    }
+    period[field] = date;
+  }
+
+  // A row that was added but never filled in
   #isEmptyMembership(membership) {
     const org = membership.belongsTo('organization').value();
     const member = membership.belongsTo('member').value();
     const role = membership.belongsTo('role').value();
 
-    return !org && !member && !role;
+    return !org && !member && !role && isEmptyPeriod(membership.during);
   }
 
   @action
@@ -167,6 +303,7 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
 
     this.memberships = this.memberships.filter((membership) => {
       if (membership.isNew && this.#isEmptyMembership(membership)) {
+        this.#rollbackPeriod(membership);
         membership.deleteRecord();
         membership.unloadRecord();
         return false;
@@ -177,9 +314,18 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
     let organization = this.model.organization;
     await organization.validate();
 
-    let validationPromises = this.memberships.map((membership) =>
-      membership.validate(),
-    );
+    let validationPromises = this.memberships.map(async (membership) => {
+      const period = membership.during;
+      if (membership.isDeleted) {
+        // A removed row is deleted together with its period, so neither needs
+        // validating; clear the errors left by an earlier save attempt.
+        membership.resetErrors();
+        period?.resetErrors();
+        return;
+      }
+      await membership.validate();
+      await period?.validate();
+    });
     await Promise.all(validationPromises);
 
     if (!this.hasValidationErrors) {
@@ -221,10 +367,9 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
         }),
       );
 
-      let savePromises = this.memberships.map((membership) =>
-        this.store.request(saveRecord(membership)),
+      await Promise.all(
+        this.memberships.map((membership) => this.#saveMembership(membership)),
       );
-      await Promise.all(savePromises);
 
       await this.store.request(saveRecord(organization));
 
@@ -235,12 +380,69 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
     }
   });
 
+  /**
+   * A removed membership is deleted before its period. Otherwise the period is
+   * saved first (the link needs a persisted period) and the membership only
+   * when it is new or its period is not linked yet.
+   */
+  async #saveMembership(membership) {
+    const period = membership.during;
+
+    if (membership.isDeleted) {
+      await this.store.request(saveRecord(membership));
+      if (period?.isNew) {
+        // Never saved, so there is nothing to delete
+        period.rollbackAttributes();
+      } else if (period) {
+        period.deleteRecord();
+        await this.store.request(saveRecord(period));
+      }
+      return;
+    }
+
+    let mustSaveMembership = membership.isNew;
+    let linkedPeriod = null;
+
+    if (period?.isNew) {
+      if (isEmptyPeriod(period)) {
+        // The user did not enter any dates, do not persist an empty period
+        membership.during = null;
+        period.rollbackAttributes();
+      } else {
+        await this.store.request(saveRecord(period));
+        linkedPeriod = period;
+      }
+    } else if (period) {
+      if (period.hasDirtyAttributes) {
+        await this.store.request(saveRecord(period));
+      }
+      linkedPeriod = period;
+    }
+
+    if (linkedPeriod && !mustSaveMembership) {
+      // Decide on the persisted link, not on `period.isNew`: after a save that
+      // failed on the membership request the period is already persisted
+      // while the membership is still unlinked on the server.
+      const remote = this.store.cache.getRemoteRelationship(
+        recordIdentifierFor(membership),
+        'during',
+      );
+      mustSaveMembership = remote.data?.id !== linkedPeriod.id;
+    }
+
+    if (mustSaveMembership) {
+      await this.store.request(saveRecord(membership));
+    }
+  }
+
   reset() {
+    this.#rollbackPeriods();
     this.#rollbackMemberships();
     this.model.organization.reset();
     this.memberships = null;
     this.selectedRoleLabel = null;
     this.founderToRemove = null;
+    this.membershipRemovalError = null;
     this.nonActiveMembership = null;
     this.nonActiveRelatedOrganization = null;
   }
@@ -263,8 +465,47 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
       }
       // `hasDirtyAttributes` is also true for an uncommitted deletion
       if (membership.isNew || membership.hasDirtyAttributes) {
-        membership.rollbackAttributes();
+        membership.reset();
+      } else {
+        // Clear the errors of a failed save
+        membership.resetErrors();
       }
     });
+  }
+
+  /**
+   * Undo the unsaved changes to the periods, before the memberships are rolled
+   * back (the period of an unloaded membership is no longer reachable).
+   */
+  #rollbackPeriods() {
+    const memberships = this.memberships?.slice() ?? [];
+    memberships.forEach((membership) => {
+      if (membership.isDestroyed || membership.isDestroying) {
+        return;
+      }
+      this.#rollbackPeriod(membership);
+    });
+  }
+
+  #rollbackPeriod(membership) {
+    const period = membership.during;
+    if (!period || period.isDestroyed || period.isDestroying) {
+      return;
+    }
+    if (membership.isSaving || period.isSaving) {
+      return;
+    }
+    if (period.isNew) {
+      if (!membership.isNew) {
+        // Unlink the never saved period from the persisted membership
+        this.store.cache.rollbackRelationships(recordIdentifierFor(membership));
+      }
+      period.reset();
+    } else if (period.hasDirtyAttributes) {
+      period.reset();
+    } else {
+      // Clear the errors of a failed save
+      period.resetErrors();
+    }
   }
 }

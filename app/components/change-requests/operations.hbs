@@ -1,0 +1,66 @@
+<div class="au-o-flow" ...attributes>
+  {{#each this.items as |item|}}
+    <AuPanel class="au-u-padding" data-test-operation={{item.type}}>
+      <AuHeading @level="3" @skin="5" class="au-u-margin-bottom-small">
+        {{item.typeLabel}}
+        <AuPill @skin={{item.opSkin}} class="au-u-margin-left-tiny">
+          {{item.opLabel}}
+        </AuPill>
+      </AuHeading>
+      {{#if item.fields.length}}
+        <dl class="au-c-dl">
+          {{#each item.fields as |field|}}
+            <dt>{{field.label}}</dt>
+            <dd>
+              {{#if (eq field.kind "reference")}}
+                <ChangeRequests::ResourceReference
+                  @reference={{field.value}}
+                  @operations={{@operations}}
+                />
+              {{else if (eq field.kind "references")}}
+                {{#if field.value.length}}
+                  <ul>
+                    {{#each field.value as |reference|}}
+                      <li>
+                        <ChangeRequests::ResourceReference
+                          @reference={{reference}}
+                          @operations={{@operations}}
+                        />
+                      </li>
+                    {{/each}}
+                  </ul>
+                {{else}}
+                  <span class="au-u-muted">Geen</span>
+                {{/if}}
+              {{else if (eq field.kind "rich-text")}}
+                <AuContent
+                  @skin="tiny"
+                  class="rich-text-editor-content"
+                  data-test-rich-text
+                >
+                  {{rich-text field.value}}
+                </AuContent>
+              {{else if (eq field.kind "date")}}
+                {{date-format field.value}}
+              {{else if (eq field.kind "list")}}
+                {{#if field.value.length}}
+                  {{join-array field.value}}
+                {{else}}
+                  <span class="au-u-muted">Geen</span>
+                {{/if}}
+              {{else if (eq field.kind "empty")}}
+                <span class="au-u-muted">Geen</span>
+              {{else}}
+                {{field.value}}
+              {{/if}}
+            </dd>
+          {{/each}}
+        </dl>
+      {{else}}
+        <p class="au-u-muted">De gegevens van dit record worden verwijderd.</p>
+      {{/if}}
+    </AuPanel>
+  {{else}}
+    <p class="au-u-muted">Deze aanvraag bevat geen gegevens.</p>
+  {{/each}}
+</div>

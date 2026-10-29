@@ -1,49 +1,67 @@
 import Route from '@ember/routing/route';
 import { service } from '@ember/service';
-import { query } from '@warp-drive/legacy/compat/builders';
+import { findRecord } from '@warp-drive/legacy/compat/builders';
 import {
   createPrimaryContact,
   createSecondaryContact,
 } from 'frontend-organization-portal/models/contact-point';
 import { ID_NAME } from 'frontend-organization-portal/models/identifier';
-import { MEMBERSHIP_ROLES } from '../../models/membership-role';
+import { CHANGE_EVENT_TYPE } from 'frontend-organization-portal/models/change-event-type';
 
+/**
+ * The form that requests a new organisation. It opens for who may request
+ * one: ABB, or an organisation that manages others according to the
+ * change-request service ("Wie beheert"). The request carries the
+ * organisation with its identifiers and primary site, and its oprichting as
+ * a change event with the link to the besluit; ABB's request is applied at
+ * once, anyone else's waits for ABB.
+ */
 export default class OrganizationsNewRoute extends Route {
   @service store;
   @service router;
+  @service changeRequests;
 
-  beforeModel() {
-    // Organisations are not created in this application: every edit is a
-    // change request about an existing organisation. The route is kept for
-    // when creation gets its own flow; until then nothing links to it and it
-    // never opens.
-    this.router.transitionTo('unauthorized');
+  async beforeModel() {
+    const rights = await this.changeRequests.loadRights();
+    if (!rights.canDecide && rights.canCreate.length === 0) {
+      this.router.transitionTo('unauthorized');
+    }
   }
 
   async model() {
     const structuredIdentifierKBO = this.store.createRecord(
       'structured-identifier',
     );
-
     const identifierKBO = this.store.createRecord('identifier', {
       idName: ID_NAME.KBO,
       structuredIdentifier: structuredIdentifierKBO,
     });
-
     const structuredIdentifierSharepoint = this.store.createRecord(
       'structured-identifier',
     );
-
     const identifierSharepoint = this.store.createRecord('identifier', {
       idName: ID_NAME.SHAREPOINT,
       structuredIdentifier: structuredIdentifierSharepoint,
     });
 
-    const { content: roles } = await this.store.request(
-      query('membership-role', {
-        'filter[:id:]': MEMBERSHIP_ROLES.map((role) => role.id).join(','),
-      }),
-    );
+    // The oprichting of the organisation, as every organisation has one
+    let oprichting;
+    try {
+      ({ content: oprichting } = await this.store.request(
+        findRecord('change-event-type', CHANGE_EVENT_TYPE.OPRICHTING),
+      ));
+    } catch (error) {
+      throw new Error(
+        'De code lijst van de veranderingsgebeurtenissen ontbreekt (type "Oprichting"), waardoor geen organisatie aangevraagd kan worden.',
+        { cause: error },
+      );
+    }
+    const decision = this.store.createRecord('decision');
+    const changeEvent = this.store.createRecord('change-event', {
+      type: oprichting,
+      description: 'Oprichting',
+      decision,
+    });
 
     return {
       primarySite: this.store.createRecord('site'),
@@ -56,7 +74,8 @@ export default class OrganizationsNewRoute extends Route {
       structuredIdentifierKBO,
       identifierSharepoint,
       structuredIdentifierSharepoint,
-      roles,
+      changeEvent,
+      decision,
     };
   }
 

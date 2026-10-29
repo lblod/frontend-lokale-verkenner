@@ -9,11 +9,22 @@ export const AgbCodeList = [CLASSIFICATION.AGB.id];
 
 export const ApbCodeList = [CLASSIFICATION.APB.id];
 
-export const IGSCodeList = [
-  CLASSIFICATION.PROJECTVERENIGING.id,
+export const ProjectverenigingCodeList = [CLASSIFICATION.PROJECTVERENIGING.id];
+export const DienstverlenendeVerenigingCodeList = [
   CLASSIFICATION.DIENSTVERLENENDE_VERENIGING.id,
+];
+export const OpdrachthoudendeVerenigingCodeList = [
   CLASSIFICATION.OPDRACHTHOUDENDE_VERENIGING.id,
+];
+export const OpdrachthoudendeVerenigingMetPrivateDeelnameCodeList = [
   CLASSIFICATION.OPDRACHTHOUDENDE_VERENIGING_MET_PRIVATE_DEELNAME.id,
+];
+
+export const IGSCodeList = [
+  ...ProjectverenigingCodeList,
+  ...DienstverlenendeVerenigingCodeList,
+  ...OpdrachthoudendeVerenigingCodeList,
+  ...OpdrachthoudendeVerenigingMetPrivateDeelnameCodeList,
 ];
 
 export const PoliceZoneCodeList = [CLASSIFICATION.POLICE_ZONE.id];
@@ -26,20 +37,48 @@ export const CentralWorshipServiceCodeList = [
   CLASSIFICATION.CENTRAL_WORSHIP_SERVICE.id,
 ];
 
+/**
+ * The classifications with change events of their own (recognitions, ...):
+ * the worship services and their central boards. `ChangeEventTypeSelect`
+ * imports it; OP v1.50.0 never exported it, which left the select empty for
+ * every organisation.
+ */
+export const WorshipCodeList = [
+  ...WorshipServiceCodeList,
+  ...CentralWorshipServiceCodeList,
+];
+
 export const RepresentativeBodyCodeList = [
   CLASSIFICATION.REPRESENTATIVE_BODY.id,
 ];
 
 export const OCMWCodeList = [CLASSIFICATION.OCMW.id];
 
-export const PrivateOcmwAssociationCodeList = [
+export const WelzijnsverenigingCodeList = [
+  CLASSIFICATION.WELZIJNSVERENIGING.id,
+];
+export const AutonomeVerzorgingsinstellingCodeList = [
+  CLASSIFICATION.AUTONOME_VERZORGINGSINSTELLING.id,
+];
+export const ZiekenhuisverenigingCodeList = [
   CLASSIFICATION.ZIEKENHUISVERENIGING.id,
+];
+export const VerenigingOfVennootschapVoorSocialeDienstverleningCodeList = [
   CLASSIFICATION.VERENIGING_OF_VENNOOTSCHAP_VOOR_SOCIALE_DIENSTVERLENING.id,
+];
+export const WoonzorgverenigingCodeList = [
   CLASSIFICATION.WOONZORGVERENIGING_OF_WOONZORGVENNOOTSCHAP.id,
 ];
+
+export const PrivateOcmwAssociationCodeList = [
+  ...ZiekenhuisverenigingCodeList,
+  ...VerenigingOfVennootschapVoorSocialeDienstverleningCodeList,
+  ...WoonzorgverenigingCodeList,
+];
+
 export const OcmwAssociationCodeList = [
-  CLASSIFICATION.WELZIJNSVERENIGING.id,
-  CLASSIFICATION.AUTONOME_VERZORGINGSINSTELLING.id,
+  ...WelzijnsverenigingCodeList,
+  ...AutonomeVerzorgingsinstellingCodeList,
   ...PrivateOcmwAssociationCodeList,
 ];
 
@@ -47,10 +86,6 @@ export const DistrictCodeList = [CLASSIFICATION.DISTRICT.id];
 
 export const PevaMunicipalityCodeList = [CLASSIFICATION.PEVA_MUNICIPALITY.id];
 export const PevaProvinceCodeList = [CLASSIFICATION.PEVA_PROVINCE.id];
-export const PevaCodeList = [
-  ...PevaMunicipalityCodeList,
-  ...PevaProvinceCodeList,
-];
 
 export const AndereCodeList = [CLASSIFICATION.ANDERE.id];
 
@@ -72,15 +107,8 @@ export const RegionaalLandschapCodeList = [
 export const BosgroepCodeList = [CLASSIFICATION.BOSGROEP.id];
 export const WoonmaatschappijCodeList = [CLASSIFICATION.WOONMAATSCHAPPIJ.id];
 
-export const WorshipCodeList = [
-  ...WorshipServiceCodeList,
-  ...CentralWorshipServiceCodeList,
-  ...RepresentativeBodyCodeList,
-];
-
-export const NonWorshipCodeList = Object.values(CLASSIFICATION)
-  .map((classification) => classification.id)
-  .filter((id) => !WorshipCodeList.includes(id));
+export const REGERING_CLASSIFICATION_ID =
+  'd4e1ca1c-668c-4316-adbf-731b5b07af1a';
 
 /**
   The field is required only in non-worship services, in all types of organisations except for:

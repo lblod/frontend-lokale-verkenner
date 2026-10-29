@@ -25,6 +25,13 @@
           </AuButtonGroup>
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
           <Error::ChangeRequest @message={{this.saveError}} />
+          {{#if this.failedRequestId}}
+            <AuLink
+              @route="aanvragen.aanvraag"
+              @model={{this.failedRequestId}}
+              data-test-failed-request
+            >Bekijk de aanvraag</AuLink>
+          {{/if}}
         </div>
       </:action>
     </PageHeader>

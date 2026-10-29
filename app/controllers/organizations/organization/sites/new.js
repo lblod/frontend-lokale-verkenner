@@ -41,8 +41,9 @@ export default class OrganizationsOrganizationSitesNewController extends Control
   @tracked heldRequest = null;
   /**
    * The uuid of the request whose apply failed on the last save (a 409 with
-   * status mislukt). The service kept it; saving is blocked until the
-   * page is reloaded.
+   * status mislukt). The service kept it; saving is blocked and the page
+   * links to the kept request, where it can be withdrawn: edits are not
+   * listed in "Alle aanvragen".
    */
   @tracked failedRequestId = null;
   /**
@@ -143,7 +144,7 @@ export default class OrganizationsOrganizationSitesNewController extends Control
         }
         // The records keep their edits so the user can correct and retry,
         // unless the outcome is unknown, a retry could create the site
-        // twice, or the apply failed: saving stays blocked.
+        // twice, or the apply failed: the page links to the kept request.
         this.saveError = error.message;
         this.saveBlocked = error.outcomeUnknown || error.applyFailed;
         this.failedRequestId = error.applyFailed ? error.requestId : null;

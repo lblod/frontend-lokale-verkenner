@@ -123,40 +123,170 @@ Or in template files by using the `is-feature-enabled` helper:
 Every edit this application makes to an organisation is a change request,
 sent to the change-request service of the backend (`/change-requests`), which
 checks who may edit what, keeps the request with the proposed state as its
-history and applies it to the organisation data. A request is applied
-immediately, unless someone else changed the same data since the page loaded
-it: the service then keeps the request without applying it, for a decision by
-ABB (see [Held requests](#held-requests)). The resource routes are read-only
-for this application: the backend refuses a write on them, and the pages that
-still contain such a write (see the table) are closed.
+history and applies it to the organisation data. An edit of an organisation's
+own data is applied immediately, unless someone else changed the same data
+since the page loaded it: the service then refuses it and the page shows the
+current values (see [Held requests](#held-requests)). An edit that changes
+nothing is not sent. The service keeps an applied edit as history only: the
+overviews do not list edits, a request page shows one by its URL. A request to
+register a new organisation or a veranderingsgebeurtenis waits for a decision
+by ABB; ABB's own is applied at once, unless data it changes was changed
+since its form was loaded: then it waits for ABB's goedkeuring on its request
+page too. The pages under `/aanvragen` show those requests and take the steps
+(see [The request pages](#the-request-pages)). The resource routes are
+read-only for this application: the backend refuses a write on them, and the
+pages that still contain such a write (see the table) are closed.
 
 ### Which pages edit
 
-| Page                                                                           | Status                                                                                                   |
-| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| Kerngegevens (`core-data/edit`)                                                | change request, aggregate `organization-core-data`                                                       |
-| Vestigingen (`sites/new`, `sites/site/edit`)                                   | change request, aggregate `site`                                                                         |
-| Veranderingsgebeurtenissen (`change-events/new`, `change-events/details/edit`) | not switched yet: the edit routes redirect to `unauthorized` and the pages show no edit action           |
-| Gerelateerde organisaties (`related-organizations/edit`)                       | not switched yet: idem                                                                                   |
-| Betrokken lokale besturen (`local-involvements/edit`, worship)                 | not switched yet: idem                                                                                   |
-| Bestuursorganen (`governing-bodies/governing-body/edit`)                       | read-only, mastered by LMB: the edit route redirects and the page shows no edit action                   |
-| Nieuwe organisatie (`organizations/new`)                                       | hidden: the route redirects, nothing links to it                                                         |
-| Nieuwe positie (`people/new-position`)                                         | a static notice without a save; its guard reads `canEdit`, which is false outside the organisation pages |
+| Page                                                           | Status                                                                                                                                                                        |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Kerngegevens (`core-data/edit`)                                | change request, aggregate `organization-core-data`; juridische vorm, werkingsgebied and bijkomende kwalificatie are shown only, they change through a veranderingsgebeurtenis |
+| Vestigingen (`sites/new`, `sites/site/edit`)                   | change request, aggregate `site`                                                                                                                                              |
+| Veranderingsgebeurtenissen (`change-events/new`)               | change request, aggregate `change-event` (see [The request pages](#the-request-pages))                                                                                        |
+| Veranderingsgebeurtenissen (`change-events/details/edit`)      | not switched yet: the edit route redirects to `unauthorized` and the page shows no edit action                                                                                |
+| Gerelateerde organisaties (`related-organizations/edit`)       | not switched yet: idem                                                                                                                                                        |
+| Betrokken lokale besturen (`local-involvements/edit`, worship) | not switched yet: idem                                                                                                                                                        |
+| Bestuursorganen (`governing-bodies/governing-body/edit`)       | read-only, mastered by LMB: the edit route redirects and the page shows no edit action                                                                                        |
+| Nieuwe organisatie (`organizations/new`)                       | change request, aggregate `new-organisation` (see [The request pages](#the-request-pages))                                                                                    |
+| Nieuwe positie (`people/new-position`)                         | a static notice without a save; its guard reads `canEdit`, which is false outside the organisation pages                                                                      |
 
 A page is switched by replacing its chain of `saveRecord` calls with one
 `submit` and by handling `ChangeRequestError` as the switched pages do,
 including a held request (refresh the route that loads the page's records,
 build the form again and show `Error::ChangeRequestHeld` with the page's
 labels for the fields, see [Held requests](#held-requests)) and a failed
-apply (block saving, see [Failed applies](#failed-applies)).
+apply (block saving and link to the kept request, see
+[Failed applies](#failed-applies)).
+
+### The request pages
+
+`/aanvragen` ("Alle aanvragen") lists the creations and change events the
+session may see (the service lists edits only for `filter[kind]=edit`, which
+the page never asks), oldest first, 20 per page, with the filters of the
+designs as query parameters: the requesting organisation (`requester`), only
+mine (`mine`), the kind (`kind`: `creation` or `change-event`; another value,
+such as `edit` from an old link, is no filter), the classification of the
+organisation the request is about (`targetClassification`), that organisation
+(`organization`; not `target`, which every Ember controller already owns),
+the period (`createdFrom`, `createdUntil`, as `YYYY-MM-DD`), the status
+(`status`; "Goedgekeurd" is not offered, the afhandeling follows it in the
+same update) and the sort (`created` or `-created`). The route asks the
+service one page (`changeRequests.list`), gives the rows the pagination
+metadata the data table's pager reads (as mu-search gives it), and resolves
+the organisations and classifications it names through the store. The two
+organisation filters search the organisations of every classification the
+register knows, the requester filter ABB's own too; the records the URL
+names are loaded for the selects (`loadSelectedRecords`). Each row links to
+the request; the organisation a request is about links to its page when it
+is registered, a new organisation that still waits is shown "(in aanvraag)"
+and one that was never registered (the creation was rejected, withdrawn or
+failed) "(niet geregistreerd)", as the service's `meta` of the target says.
+The pages have the navigation bar of the organisation pages, with "← Loket"
+and the breadcrumbs back to the list.
+
+`/aanvragen/:id` shows one request: its status with a description, who
+requested it and when, and three tabs. "Aanvraagformulier" renders the
+operations the request was submitted with (`ChangeRequests::Operations`: one
+card per record, the records it creates named from their own operation, the
+others loaded from the store); "Extra informatie" the exchange between ABB
+and the requester (questions, answers, rejections, contests);
+"Aanvraaggeschiedenis" every step with who took it and the resulting status.
+What the viewer may do comes from the status and the rights the `aanvragen`
+route loaded (`changeRequests.loadRights`): ABB approves, rejects, asks for
+information and withdraws; the requesting organisation answers a question,
+contests a rejection and withdraws. An edit takes none of the decision steps:
+a failed one is withdrawn. Applying a failed request again (a `hertoepassing`)
+is not in the designs, so the page does not offer it; the service keeps the
+step for API use. Every action is a `ChangeRequests::StepModal`, which posts
+the step (`changeRequests.takeDecision`) and refreshes the page; when the
+apply of a goedkeuring fails, the page says so and shows the request anew
+(now `mislukt`). The route resets the page's controller when the request
+changes, so a modal left open does not open on the next request. An approval
+over data that changed since the request was submitted shows the conflicts,
+relationship values by the name of the record, and needs a confirmation; the
+modal then sends the service's `conflicts-token`, so it overrides exactly
+the conflicts the reviewer saw. A request that cannot be fetched (not found,
+not visible, not logged in, no answer) is a message on the page. The service
+shows the
+person who submitted a request and the texts of the steps to the requesting
+organisation and ABB only; the pages never name a person, only the
+organisation. The labels of statuses, kinds, steps and fields live in
+`app/constants/change-requests.js`. The Doel of an organisation, which the
+rich-text editor writes as HTML, is shown through the `rich-text` helper,
+which keeps only the tags and attributes the editor writes
+(`app/utils/rich-text.js`, DOMPurify), on the kerngegevens page as in the
+Aanvraagformulier.
+
+`/organisaties/nieuwe-organisatie` ("Voeg organisatie toe") is the creation
+form: OP's form without the related-organisation fields and the worship
+types, with the date of the oprichting (required, as for every new change
+event), the link to the besluit tot oprichting and an explanation for ABB.
+It opens for who may request an organisation (`changeRequests.rights`: ABB,
+or an organisation that manages others) and offers only the classifications
+the service allows (`ClassificationSelect @allowedIds`). It submits the
+organisation (an `administrative-units` or `registered-organizations`
+document, as the classification demands; a Vlaamse gemeenschapscommissie is
+an administrative unit), its KBO and SharePoint identifiers, its primary site
+with address and contact points (OP's "Maatschappelijke zetel" as the site
+type of an AGB, APB, IGS, politiezone, hulpverleningszone, OCMW-vereniging,
+PEVA or Andere; the primary site is not also one of its `sites`), and the
+oprichting as a change event with its date, its result (the status the
+organisation starts with, so the organisation's veranderingsgebeurtenissen
+page lists it) and its besluit when one was filled in, as one request
+(aggregate `new-organisation`, no target). ABB's request is applied at once
+and the page goes to the new organisation; anyone else's waits and the page
+goes to the request (with the `aanvragen` loading substate while it loads),
+as does ABB's own when it waits over changed data, with a notice for ABB. A
+KBO number that is registered or requested already is shown on the field.
+An applied request the page cannot follow up, or whose apply failed, goes to
+the request page; when the outcome is unknown (a 5xx, no answer) the form
+blocks a new attempt until the page is reloaded, since it could register the
+organisation twice; a browser that knows it is offline sent nothing, so that
+attempt can be repeated. The werkingsgebied comes from the scope-of-operation
+service, as in OP (the stack runs it). The related organisations of the new
+one (its founder) are not part of the request yet.
+
+`/organisaties/:id/veranderingsgebeurtenissen/nieuw` is the change-event
+form: OP's form for one organisation (the types about several organisations,
+fusie and samenvoeging, are left out through `ChangeEventTypeSelect
+@excludeIds`), with the links to the besluit and an explanation for ABB. Its
+route loads the fields an event may change (status, juridische vorm,
+werkingsgebied, qualifications) before the form changes them, since the
+request carries their loaded values as its base. It submits the event, its
+result (the resulting status, legal form, werkingsgebied, qualifications or
+new name, as OP derives them) and the fields of the organisation the event
+changes as one request (aggregate `change-event`, target the organisation);
+the organisation only follows the event when no later event is recorded yet,
+as in OP. ABB's request is applied at once and the page goes to the event;
+anyone else's waits and the page goes to the request, as does ABB's own when
+it waits over changed data. A refused request leaves the organisation as it
+was loaded, so another attempt starts from it; the other outcomes are handled
+as on the creation form. The overview of the organisation's events lists the
+requests that are not applied yet (waiting, or rejected and still to be
+contested) with the type and date of the event each proposes and a link to
+it. Not in the request: ending the relations of a dissolved organisation (OP
+does that on save; it follows with the related-organisations work).
+
+### The entry from Loket
+
+`/mijn-organisatie` lands the user on the kerngegevens of the organisation
+they are logged in for (the session's group), so Loket can link to it
+without knowing the organisation's id; a visitor who is not logged in goes to
+the login page first. With `EMBER_LOKET_URL` set on the frontend container
+(the image fills the `{{LOKET_URL}}` placeholder of `loketUrl` in the config
+from it) the navigation bar starts with a "← Loket" link; without it no link
+is shown.
 
 ### The `change-requests` service
 
 `app/services/change-requests.js`:
 
-- `submit(aggregate, target, records)` posts the proposed state of one
-  aggregate. `target` is the uuid of the organisation the request is about,
-  `records` the Ember Data records of the aggregate, dependencies first (the
+- `submit(aggregate, target, records, { reason })` posts the proposed state
+  of one aggregate. `target` is the uuid of the organisation the request is
+  about (null for a new organisation, which has none yet), `reason` the
+  submitter's explanation for ABB, `records` the Ember Data records of the
+  aggregate, dependencies first (the
   address and contact points before the site, the site before the organisation
   that links it). Every record is serialised with the JSON:API serializer of
   the store, so the service receives the same types, attributes and
@@ -196,12 +326,15 @@ apply (block saving, see [Failed applies](#failed-applies)).
     it is offline is "not sent": the page keeps the save button;
   - `applied` (the service answered `2xx` but the answer lacks a minted id or
     a reload failed): the change is in the application graph; the page leaves
-    with a warning toast, the index page loads the applied state;
-  - `held` (the service answered `201` with status `ingediend`): nothing is
-    applied and the request waits for ABB; `conflicts` lists the fields
-    someone else changed and `requestId` is the request. `submit` has
-    discarded the local changes, see [Held requests](#held-requests);
-    `reloadFailed` is set when it could not reload the records afterwards;
+    with a warning toast, the index page loads the applied state (the
+    creation form goes to the request, `requestId`);
+  - `held`: nothing is applied. For an edit the service refused it with
+    `409` because someone else changed the same data; for a new organisation
+    or a veranderingsgebeurtenis it answered `201` with status `ingediend`:
+    the request waits for ABB (`waiting`, `requestId`). `conflicts` lists the
+    fields someone else changed. `submit` has discarded the local changes,
+    see [Held requests](#held-requests); `reloadFailed` is set when it could
+    not reload the records afterwards;
   - `applyFailed` (a `409` whose `meta["change-request"]` has status
     `mislukt`): the service kept the request (`requestId`) but its apply
     failed; the page keeps its edits, blocks the save button and links to
@@ -351,11 +484,17 @@ that each make their new vestiging the primary site conflict on
 
 ### Held requests
 
-When the service finds a conflict it records the request with status
-`ingediend` and answers `201` without applying anything; the request waits for
-a decision by ABB, who approves or rejects it later on the service
-(`POST /change-requests/:id/steps`; this application has no screen for that
-yet). For the frontend this is neither a success nor a refusal:
+An edit of an organisation's own data is applied at once or not at all: when
+the service finds a conflict (someone else changed the same field since the
+page loaded it) it refuses the save with `409` and the conflicts, and nothing
+is recorded. A request to register a new organisation or a
+veranderingsgebeurtenis is recorded with status `ingediend` and answered with
+`201` without applying anything; it waits for a decision by ABB on the
+request pages. For the frontend both are neither a success nor a refusal:
+`ChangeRequestError.held` is set for both, `waiting` only for a request that
+waits for ABB (with its `requestId`). The edit pages only get the first; the
+creation and change-event forms, which get the second, go to the request
+page. What follows is how the edit pages handle a held save:
 
 - `submit` discards the local changes, unloads the new records (they exist in
   the request only) and reloads the other records with the relationships the
@@ -406,20 +545,24 @@ transaction: when it fails twice it keeps the request with status
 changes empty on the organisation. It answers `409` with
 `meta["change-request"]` (`{ id, status: "mislukt" }`). A new save would
 start from the values the page loaded, find the emptied keys and be refused
-as a conflict, so the page keeps its edits and blocks the save button until
-it is reloaded. Applying the kept request again (a `hertoepassing` step) is
-not in the designs, so the pages do not offer it; the service keeps the step
-for API use.
+as a conflict, so the page keeps its edits, blocks the save button and shows a
+link to the kept request ("Bekijk de aanvraag", `/aanvragen/:id`). Edits are
+not listed in "Alle aanvragen", so the link is the only way to that request;
+there the requester can withdraw it. Applying it again (a `hertoepassing`
+step) is not in the designs, so the pages do not offer it; the service keeps
+the step for API use.
 
 ### Aggregates
 
 An aggregate is the set of records one page saves together; the service only
 accepts the types that belong to it.
 
-| Aggregate                | Page                                         | Records, in the order they are sent                                                                                                                                                                                                                                |
-| ------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `organization-core-data` | Kerngegevens (`core-data/edit`)              | the address and the contact points when changed, the primary site when new or when a contact point was added, the KBO (when the type requires one) and SharePoint structured identifiers and identifiers, the organisation                                         |
-| `site`                   | Vestigingen (`sites/new`, `sites/site/edit`) | the contact points and the address when changed (always for a new site), the site, the organisation: always on `sites/new`, where it links the new site through its `sites` or `primary-site` relationship, and on `sites/site/edit` when the primary site changes |
+| Aggregate                | Page                                          | Records, in the order they are sent                                                                                                                                                                                                                                |
+| ------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `organization-core-data` | Kerngegevens (`core-data/edit`)               | the address and the contact points when changed, the primary site when new or when a contact point was added, the KBO (when the type requires one) and SharePoint structured identifiers and identifiers, the organisation                                         |
+| `site`                   | Vestigingen (`sites/new`, `sites/site/edit`)  | the contact points and the address when changed (always for a new site), the site, the organisation: always on `sites/new`, where it links the new site through its `sites` or `primary-site` relationship, and on `sites/site/edit` when the primary site changes |
+| `new-organisation`       | Nieuwe organisatie (`organizations/new`)      | the KBO and SharePoint structured identifiers and identifiers, the contact points, the address and the primary site, the besluit when one was filled in, the oprichting (change event) and its result, the organisation                                            |
+| `change-event`           | Veranderingsgebeurtenis (`change-events/new`) | the besluit when the type asks for one and one was filled in, the change event, its result, the organisation with the fields the event changes                                                                                                                     |
 
 The edit routes create a placeholder for a contact point the site lacks and
 for a missing SharePoint identifier. A new record is always dirty, so a
@@ -469,14 +612,26 @@ with the service:
 - A request the service does not apply answers `201` with
   `attributes.status` `ingediend`, its id in `data.id` and
   `attributes.conflicts`; the frontend reads `resource.id` and `key` of each
-  conflict to name the field. It does not require `lids` in that answer, and
-  does not show the steps of a request or a decision screen for ABB yet.
+  conflict to name the field. It does not require `lids` in that answer. An
+  edit that changes nothing answers `200` with
+  `{ "data": null, "meta": { "unchanged": true } }`.
+- A KBO number is unique: a creation, or a kerngegevens edit that sets or
+  changes it, whose number another organisation has or a waiting creation
+  proposes is a `409` with `errors[0].meta["kbo-number"]` and
+  `meta.organisation` or `meta["change-request"]`; the same can come back on
+  a goedkeuring or betwisting of a creation.
+- In a listing and on a request, `relationships.target.meta` is
+  `{ registered: false, pending: true }` for a creation that waits,
+  `{ registered: false, pending: false }` for one whose organisation was
+  never registered, and absent when the organisation exists.
 - A failed apply answers `409` with `errors[].meta["change-request"]`
-  `{ id, status: "mislukt" }`. The frontend takes two steps on a request,
-  `POST /change-requests/:id/steps` with `step-type` `intrekking` (a held
-  request) and `hertoepassing` (a failed one); a `409` for a step the status
-  does not admit carries that status in `errors[].meta.status`, which the
-  frontend reads to treat a request withdrawn or applied meanwhile as done.
+  `{ id, status: "mislukt" }`. Steps go to
+  `POST /change-requests/:id/steps`; a `409` for a step the status does not
+  admit carries that status in `errors[].meta.status`, which the frontend
+  reads to treat a request withdrawn meanwhile as done. A failed edit is
+  only applied again (`hertoepassing`, by ABB or the requesting
+  organisation) or withdrawn (`intrekking`); the pages offer only the
+  withdrawal, the `hertoepassing` stays for API use.
 
 ## Releasing a new version
 

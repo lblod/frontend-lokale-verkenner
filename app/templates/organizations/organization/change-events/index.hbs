@@ -3,10 +3,69 @@
   <:subtitle>{{@model.organization.abbName}}
     ({{@model.organization.classification.label}})</:subtitle>
   <:action>
-    {{! Read-only until this page is switched to change requests }}
-    <ReportWrongData />
+    <SecuredArea>
+      <:edit>
+        <Button::New @route="organizations.organization.change-events.new" />
+      </:edit>
+      <:readOnly>
+        <ReportWrongData />
+      </:readOnly>
+    </SecuredArea>
   </:action>
 </PageHeader>
+
+{{#if @model.pendingRequests.length}}
+  <div class="au-o-box au-u-padding-top-none" data-test-pending-requests>
+    <AuHeading @level="2" @skin="4" class="au-u-margin-bottom-small">
+      Aanvragen
+    </AuHeading>
+    <AuTable @size="small">
+      <:header>
+        <tr>
+          <th>Type veranderingsgebeurtenis</th>
+          <th>Datum</th>
+          <th>Datum aanvraag</th>
+          <th>Status aanvraag</th>
+          <th></th>
+        </tr>
+      </:header>
+      <:body>
+        {{#each @model.pendingRequests as |pending|}}
+          <tr data-test-pending-request>
+            <td>
+              {{#if pending.eventType}}
+                {{pending.eventType.label}}
+              {{else}}
+                Veranderingsgebeurtenis
+              {{/if}}
+              {{#if pending.waiting}}
+                <span class="au-u-muted">
+                  (niet beschikbaar: aanvraag in verwerking)
+                </span>
+              {{/if}}
+            </td>
+            <td>
+              {{#if pending.eventDate}}
+                {{date-format pending.eventDate}}
+              {{/if}}
+            </td>
+            <td>{{date-format pending.request.attributes.created}}</td>
+            <td>
+              <ChangeRequests::Status
+                @status={{pending.request.attributes.status}}
+              />
+            </td>
+            <td>
+              <AuLink @route="aanvragen.aanvraag" @model={{pending.request.id}}>
+                Bekijk aanvraag
+              </AuLink>
+            </td>
+          </tr>
+        {{/each}}
+      </:body>
+    </AuTable>
+  </div>
+{{/if}}
 
 <AuDataTable
   @content={{@model.changeEventResults}}

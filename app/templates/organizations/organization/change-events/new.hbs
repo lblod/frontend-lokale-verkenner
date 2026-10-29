@@ -8,7 +8,7 @@
 <div class="au-c-body-container au-c-body-container--scroll">
   <form
     class="au-o-box au-o-flow au-o-flow--large"
-    {{on "submit" (perform this.createNewChangeEventTask)}}
+    {{on "submit" (perform this.submitRequestTask)}}
   >
     <PageHeader>
       <:title>Voeg veranderingsgebeurtenis toe</:title>
@@ -24,18 +24,32 @@
               Annuleer
             </AuLink>
             <AuButton
-              @loading={{this.createNewChangeEventTask.isRunning}}
-              @loadingMessage="Opslaan"
-              @disabled={{this.createNewChangeEventTask.isRunning}}
+              @loading={{this.submitRequestTask.isRunning}}
+              @loadingMessage={{this.submitLabel}}
+              @disabled={{or this.submitRequestTask.isRunning this.saveBlocked}}
               type="submit"
+              data-test-submit-request
             >
-              Opslaan
+              {{this.submitLabel}}
             </AuButton>
           </AuButtonGroup>
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
+          <Error::ChangeRequest @message={{this.saveError}} />
         </div>
       </:action>
     </PageHeader>
+
+    {{#unless this.appliesAtOnce}}
+      <AuAlert
+        @skin="info"
+        @icon="info-circle"
+        @title="Een veranderingsgebeurtenis wordt gevalideerd door ABB"
+      >
+        Na het versturen valideert ABB de aanvraag; de gegevens van de
+        organisatie veranderen pas na goedkeuring. Je volgt de aanvraag op onder
+        "Alle aanvragen".
+      </AuAlert>
+    {{/unless}}
 
     <EditCard @containsRequiredFields={{true}}>
       <:title>Veranderingsgebeurtenis</:title>
@@ -53,10 +67,15 @@
                   @id="change-event-type"
                   @selected={{@model.changeEvent.type}}
                   @organizationClassification={{@model.organization.classification}}
-                  @onChange={{fn (mut @model.changeEvent.type)}}
+                  @excludeIds={{this.excludedTypeIds}}
+                  @onChange={{this.setType}}
                   @error={{hasError}}
                 />
               </:content>
+              <:helpText>
+                Een fusie of samenvoeging betreft meerdere organisaties en kan
+                nog niet aangevraagd worden.
+              </:helpText>
             </Item>
             <Item @labelFor="change-event-description">
               <:label>Beschrijving</:label>
@@ -72,7 +91,7 @@
                 />
               </:content>
             </Item>
-            {{#if (this.isNameChange @model.changeEvent.type)}}
+            {{#if (this.isNameChangeType @model.changeEvent.type)}}
               <Item
                 @labelFor="change-event-resulting-name"
                 @required={{true}}
@@ -145,79 +164,27 @@
             {{/if}}
             {{#if @model.changeEvent.requiresDecisionInformation}}
               <Item
-                @labelFor="change-event-decision-link"
-                @errorMessage={{@model.decision.error.documentLink.message}}
+                @errorMessage={{@model.decision.error.documentLinks}}
+                @labelFor="change-event-decision-link-0"
               >
-                <:label>Link naar besluit</:label>
-                <:content as |hasError|>
-                  <TrimInput
-                    @value={{@model.decision.documentLink}}
-                    @onUpdate={{fn (mut @model.decision.documentLink)}}
-                    @width="block"
-                    @error={{hasError}}
-                    id="change-event-decision-link"
+                <:label>Links naar besluiten</:label>
+                <:content>
+                  <ChangeEvents::DecisionDocumentLinks
+                    @decision={{@model.decision}}
+                    @errors={{@model.decision.error.documentLinks}}
                   />
                 </:content>
                 <:helpText>
-                  {{help-text "url"}}
+                  Een link naar het besluit over deze veranderingsgebeurtenis,
+                  bijvoorbeeld op de website van het bestuur.
                 </:helpText>
+                <:error>
+                  {{! The errors are shown under each link }}
+                </:error>
               </Item>
             {{/if}}
           </:left>
           <:right as |Item|>
-            {{#if
-              (and
-                (not @model.organization.isAgb)
-                (not @model.organization.isApb)
-                (not @model.organization.isIgs)
-                (not @model.organization.isPoliceZone)
-                (not @model.organization.isAssistanceZone)
-                @model.changeEvent.requiresDecisionInformation
-              )
-            }}
-              {{#unless @model.changeEvent.isCityChangeEvent}}
-                <Item
-                  @labelFor="change-event-decision-activity-date"
-                  @errorMessage={{@model.decisionActivity.error.endDate.message}}
-                >
-                  <:label>Datum ministerieel besluit</:label>
-                  <:content as |hasError|>
-                    <Datepicker
-                      @error={{hasError}}
-                      @id="change-event-decision-activity-date"
-                      @value={{@model.decisionActivity.endDate}}
-                      @onChange={{fn (mut @model.decisionActivity.endDate)}}
-                    />
-                  </:content>
-                </Item>
-              {{/unless}}
-              <Item
-                @labelFor="change-event-decision-publication-date"
-                @errorMessage={{@model.decision.error.publicationDate.message}}
-              >
-                <:label>
-                  {{#if
-                    (and
-                      (not @model.organization.isAgb)
-                      (not @model.organization.isApb)
-                      @model.changeEvent.isCityChangeEvent
-                    )
-                  }}
-                    Datum besluit
-                  {{else}}
-                    Datum publicatie BS
-                  {{/if}}
-                </:label>
-                <:content as |hasError|>
-                  <Datepicker
-                    @error={{hasError}}
-                    @id="change-event-decision-publication-date"
-                    @value={{@model.decision.publicationDate}}
-                    @onChange={{fn (mut @model.decision.publicationDate)}}
-                  />
-                </:content>
-              </Item>
-            {{/if}}
             <Item
               @labelFor="change-event-date"
               @required={{true}}
@@ -233,172 +200,41 @@
                 />
               </:content>
             </Item>
+            {{#if @model.changeEvent.requiresDecisionInformation}}
+              <Item
+                @labelFor="change-event-decision-publication-date"
+                @errorMessage={{@model.decision.error.publicationDate.message}}
+              >
+                <:label>Datum besluit</:label>
+                <:content as |hasError|>
+                  <Datepicker
+                    @error={{hasError}}
+                    @id="change-event-decision-publication-date"
+                    @value={{@model.decision.publicationDate}}
+                    @onChange={{fn (mut @model.decision.publicationDate)}}
+                  />
+                </:content>
+              </Item>
+            {{/if}}
+            <Item @labelFor="request-reason" @alignTop={{true}}>
+              <:label>Toelichting bij de aanvraag</:label>
+              <:content>
+                <AuTextarea
+                  id="request-reason"
+                  @width="block"
+                  value={{this.reason}}
+                  rows="4"
+                  {{on "input" this.setReason}}
+                />
+              </:content>
+              <:helpText>
+                Optioneel. ABB ziet deze toelichting bij het valideren van de
+                aanvraag.
+              </:helpText>
+            </Item>
           </:right>
         </Card.Columns>
       </:card>
     </EditCard>
-
-    {{#if @model.changeEvent.canAffectMultipleOrganizations}}
-      <EditCard>
-        <:title>{{@model.changeEvent.type.label}}</:title>
-        <:card as |Card|>
-          <Card.Columns>
-            <:left as |Item|>
-              {{#each
-                @model.changeEvent.originalOrganizations
-                as |organization|
-              }}
-                <Item @required={{eq @model.organization organization}}>
-                  <:label>Betrokken organisatie</:label>
-                  <:content>
-                    <div class="flex items-center">
-                      <OrganizationSelect
-                        @disabled={{eq this.model.organization organization}}
-                        @selected={{organization}}
-                        @onChange={{fn
-                          this.updateOriginalOrganizations
-                          organization
-                        }}
-                        @classificationCodes={{this.classificationCodes}}
-                        @filter={{this.filterSelectedOriginalOrganizations}}
-                        @showKbo={{true}}
-                        class="grow"
-                      />
-                      {{#if
-                        (and
-                          (gt @model.changeEvent.originalOrganizations.length 1)
-                          (not (eq this.model.organization organization))
-                        )
-                      }}
-                        <AuButton
-                          @alert={{true}}
-                          @skin="link"
-                          @icon="bin"
-                          @hideText={{true}}
-                          @size="large"
-                          class="shrink-0"
-                          type="button"
-                          {{on
-                            "click"
-                            (fn this.removeOriginalOrganization organization)
-                          }}
-                        >
-                          Verwijder
-                        </AuButton>
-                      {{/if}}
-                    </div>
-                  </:content>
-                </Item>
-              {{/each}}
-
-              {{#if
-                (or
-                  this.isAddingOriginalOrganizations
-                  (lt @model.changeEvent.originalOrganizations.length 2)
-                )
-              }}
-                <Item
-                  @required={{and
-                    @model.changeEvent.isMergerChangeEvent
-                    (lt @model.changeEvent.originalOrganizations.length 2)
-                  }}
-                  @errorMessage={{@model.changeEvent.error.originalOrganizations.message}}
-                >
-                  <:label>Betrokken organisatie</:label>
-                  <:content as |hasError|>
-                    <div class="flex items-center">
-                      <OrganizationSelect
-                        @onChange={{this.updateOriginalOrganizations}}
-                        @classificationCodes={{this.classificationCodes}}
-                        @filter={{this.filterSelectedOriginalOrganizations}}
-                        @error={{hasError}}
-                        @showKbo={{true}}
-                        class="grow"
-                      />
-                      {{#if
-                        (gt @model.changeEvent.originalOrganizations.length 1)
-                      }}
-                        <AuButton
-                          @alert={{true}}
-                          @skin="link"
-                          @icon="bin"
-                          @hideText={{true}}
-                          @size="large"
-                          class="shrink-0"
-                          {{on
-                            "click"
-                            (fn (mut this.isAddingOriginalOrganizations) false)
-                          }}
-                        >
-                          Verwijder
-                        </AuButton>
-                      {{/if}}
-                    </div>
-                  </:content>
-                </Item>
-              {{else}}
-                <Item>
-                  <:content>
-                    <AuButton
-                      @skin="link"
-                      {{on
-                        "click"
-                        (fn (mut this.isAddingOriginalOrganizations) true)
-                      }}
-                    >
-                      Voeg bijkomende organisatie toe
-                    </AuButton>
-                  </:content>
-                </Item>
-              {{/if}}
-            </:left>
-
-            <:right as |Item|>
-              {{#if @model.changeEvent.isMergerChangeEvent}}
-                <Item
-                  @required={{true}}
-                  @errorMessage={{@model.changeEvent.error.resultingOrganizations.message}}
-                >
-                  <:label>Resulterende organisatie</:label>
-                  <:content as |hasError|>
-                    {{#if @model.organization.isCentralWorshipService}}
-                      <OrganizationSelect
-                        @selected={{this.selectedResultingOrganization}}
-                        @onChange={{this.updateResultingOrganizations}}
-                        @classificationCodes={{this.classificationCodes}}
-                        @filter={{this.filterSelectedOriginalOrganizations}}
-                        @error={{hasError}}
-                        @showKbo={{true}}
-                      />
-                    {{else}}
-                      <div class={{if hasError "ember-power-select--error"}}>
-                        <PowerSelect
-                          @options={{has-many-value
-                            @model.changeEvent
-                            "originalOrganizations"
-                          }}
-                          @selected={{this.selectedResultingOrganization}}
-                          @onChange={{this.updateResultingOrganizations}}
-                          as |organization|
-                        >
-                          {{#if organization.kboNumber}}
-                            {{organization.kboNumber}}
-                            -
-                            {{organization.abbName}}
-                          {{else}}
-                            {{organization.abbName}}
-                            (geen kbo gevonden)
-                          {{/if}}
-                        </PowerSelect>
-                      </div>
-                    {{/if}}
-                  </:content>
-                </Item>
-              {{/if}}
-            </:right>
-          </Card.Columns>
-        </:card>
-      </EditCard>
-    {{/if}}
   </form>
 </div>
