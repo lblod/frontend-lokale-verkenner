@@ -3,14 +3,8 @@
   <:subtitle>{{@model.organization.abbName}}
     ({{@model.organization.classification.label}})</:subtitle>
   <:action>
-    <SecuredArea>
-      <:edit>
-        <Button::New @route="organizations.organization.change-events.new" />
-      </:edit>
-      <:readOnly>
-        <ReportWrongData />
-      </:readOnly>
-    </SecuredArea>
+    {{! Read-only until this page is switched to change requests }}
+    <ReportWrongData />
   </:action>
 </PageHeader>
 
@@ -44,11 +38,6 @@
         @currentSorting={{this.sort}}
         @label="Resulterende status"
       />
-      <SecuredArea>
-        <:edit>
-          <th></th>
-        </:edit>
-      </SecuredArea>
     </c.header>
     <c.body as |changeEventResult|>
       {{#let changeEventResult.resultFrom as |changeEvent|}}
@@ -70,18 +59,6 @@
             @label={{changeEventResult.status.label}}
           />
         </td>
-        <SecuredArea>
-          <:edit>
-            <td>
-              <AuLink
-                @route="organizations.organization.change-events.details.edit"
-                @model={{changeEvent.id}}
-              >
-                Bewerk
-              </AuLink>
-            </td>
-          </:edit>
-        </SecuredArea>
       {{/let}}
     </c.body>
   </t.content>

@@ -1,0 +1,54 @@
+{{#if @held}}
+  <AuAlert
+    @skin="warning"
+    @icon="alert-triangle"
+    @title="Wijziging niet doorgevoerd"
+    ...attributes
+  >
+    <p>
+      {{#if @held.fields.length}}
+        Je wijziging werd niet doorgevoerd omdat iemand anders intussen dezelfde
+        gegevens heeft gewijzigd:
+        {{join-array @held.fields}}.
+      {{else}}
+        Je wijziging werd niet doorgevoerd.
+      {{/if}}
+      {{#if @held.waiting}}
+        {{#if this.withdrawn}}
+          Je hebt je aanvraag ingetrokken.
+        {{else}}
+          Je aanvraag wacht op een beslissing van ABB.
+        {{/if}}
+      {{/if}}
+      {{#if @held.reloadFailed}}
+        De gegevens konden niet vernieuwd worden; herlaad de pagina voor je
+        opnieuw opslaat.
+      {{else}}
+        {{yield}}
+      {{/if}}
+    </p>
+    {{#if this.canWithdraw}}
+      <p data-test-held-competing>
+        Sla je dezelfde gegevens opnieuw op, dan vervangt je nieuwe wijziging
+        deze aanvraag en wordt ze automatisch ingetrokken. Wijzig je maar een
+        deel ervan, dan blijft deze aanvraag wachten op ABB naast je nieuwe
+        wijziging.
+      </p>
+      <AuButton
+        @skin="secondary"
+        @loading={{this.withdraw.isRunning}}
+        @loadingMessage="Aanvraag intrekken"
+        class="au-u-margin-top-small"
+        data-test-held-withdraw
+        {{on "click" (perform this.withdraw)}}
+      >
+        Aanvraag intrekken
+      </AuButton>
+    {{/if}}
+    {{#if this.withdrawError}}
+      <AuHelpText @error={{true}} data-test-held-withdraw-error>
+        {{this.withdrawError}}
+      </AuHelpText>
+    {{/if}}
+  </AuAlert>
+{{/if}}

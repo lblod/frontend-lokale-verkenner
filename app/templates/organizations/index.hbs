@@ -143,20 +143,6 @@
         <menu.general>
           <PageHeader class="au-o-box">
             <:title>Organisaties</:title>
-            <:action>
-              <SecuredArea>
-                <:edit>
-                  <AuLink
-                    @route="organizations.new"
-                    @icon="add"
-                    @iconAlignment="left"
-                    @skin="button"
-                  >
-                    Nieuw
-                  </AuLink>
-                </:edit>
-              </SecuredArea>
-            </:action>
           </PageHeader>
         </menu.general>
       </t.menu>
@@ -206,9 +192,7 @@
               <a
                 class="au-c-link"
                 href="mailto:{{config 'contactEmail'}}"
-              >{{config "contactEmail"}}</a>
-              of
-              <AuLink @route="organizations.new">maak een organisatie aan.</AuLink>
+              >{{config "contactEmail"}}</a>.
             </p>
           </TableMessage>
         {{else}}

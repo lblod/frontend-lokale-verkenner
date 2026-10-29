@@ -1,0 +1,11 @@
+{{!
+  Renders its block anew, every component in it created again, whenever @key
+  changes. Ember keeps a component as long as its place in the template stays,
+  also when the route refreshes and only the model changes, so components that
+  copy an argument when they are created (the address search, the rich-text
+  editor, the qualifications choice) would keep showing the old values. An
+  each over a one-item list keyed by the value replaces the block instead.
+}}
+{{#each (array @key) key="@identity"}}
+  {{yield}}
+{{/each}}

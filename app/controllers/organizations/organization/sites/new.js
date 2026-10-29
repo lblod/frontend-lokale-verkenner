@@ -4,13 +4,53 @@ import { dropTask } from 'ember-concurrency';
 import { combineFullAddress } from 'frontend-organization-portal/models/address';
 import { tracked } from '@glimmer/tracking';
 import { setEmptyStringsToNull } from 'frontend-organization-portal/utils/empty-string-to-null';
+import { isLoaded } from 'frontend-organization-portal/utils/records';
 import { action } from '@ember/object';
-import { saveRecord } from '@warp-drive/legacy/compat/builders';
+import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
+import {
+  ORGANIZATION_SITE_LABELS,
+  heldRequestNotice,
+  reportHeldRequest,
+} from 'frontend-organization-portal/utils/change-request-conflicts';
 
 export default class OrganizationsOrganizationSitesNewController extends Controller {
   @service router;
   @service store;
+  @service changeRequests;
+  @service toaster;
   @tracked isPrimarySite = false;
+  /**
+   * The message of the change-request service when it refused the last save.
+   */
+  @tracked saveError;
+  /**
+   * Whether saving is blocked until the page is reloaded: the last save
+   * ended without knowing whether the site was created (a 5xx), and a retry
+   * could create it twice; its apply failed (see `failedRequestId`); or it
+   * was held and the organisation could not be reloaded, so a new save would
+   * start from sites that are not the current ones.
+   */
+  @tracked saveBlocked = false;
+  /**
+   * Set when the change-request service held the last save instead of
+   * applying it, because someone else changed the sites of the organisation
+   * in the meantime: `{ id, fields, reloadFailed }`, the request and the
+   * labels of those fields (see `heldRequestNotice`). The site is not
+   * created; the request waits for a decision by ABB.
+   */
+  @tracked heldRequest = null;
+  /**
+   * The uuid of the request whose apply failed on the last save (a 409 with
+   * status mislukt). The service kept it; saving is blocked until the
+   * page is reloaded.
+   */
+  @tracked failedRequestId = null;
+  /**
+   * Bumped once the page has started anew after a held save, so that the
+   * template builds the form anew (`<Rebuild>`): some of its components (the
+   * address search) keep the values they were created with.
+   */
+  @tracked formRevision = 0;
 
   get hasValidationErrors() {
     return (
@@ -23,6 +63,11 @@ export default class OrganizationsOrganizationSitesNewController extends Control
 
   createSiteTask = dropTask(async (event) => {
     event.preventDefault();
+    if (this.saveBlocked) {
+      return;
+    }
+    this.saveError = null;
+    this.heldRequest = null;
 
     let { address, organization, contact, secondaryContact, site } = this.model;
 
@@ -32,25 +77,13 @@ export default class OrganizationsOrganizationSitesNewController extends Control
     await secondaryContact.validate();
 
     if (!this.hasValidationErrors) {
-      contact = setEmptyStringsToNull(contact);
-      await this.store.request(saveRecord(contact));
-
-      secondaryContact = setEmptyStringsToNull(secondaryContact);
-      await this.store.request(saveRecord(secondaryContact));
-
       if (!address.isPostcodeInFlanders) {
         address.province = '';
       }
-
       address.fullAddress = combineFullAddress(address);
-      address = setEmptyStringsToNull(address);
-
-      await this.store.request(saveRecord(address));
 
       site.address = address;
-
       (await site.contacts).push(contact, secondaryContact);
-      await this.store.request(saveRecord(site));
 
       let nonPrimarySites = await organization.sites;
 
@@ -66,38 +99,108 @@ export default class OrganizationsOrganizationSitesNewController extends Control
         nonPrimarySites.push(site);
       }
 
-      await this.store.request(saveRecord(organization));
+      // Dependencies first: the contact points and the address before the
+      // site, the site before the organisation that links it.
+      const records = [
+        setEmptyStringsToNull(contact),
+        setEmptyStringsToNull(secondaryContact),
+        setEmptyStringsToNull(address),
+        site,
+        organization,
+      ];
 
-      this.router.replaceWith('organizations.organization.sites.site', site.id);
+      let saved;
+      try {
+        saved = await this.changeRequests.submit(
+          'site',
+          organization.id,
+          records,
+        );
+      } catch (error) {
+        if (!(error instanceof ChangeRequestError)) {
+          throw error;
+        }
+        if (error.applied) {
+          // The site is created but the page could not follow it up; leave
+          // it, the list of sites loads the applied state.
+          this.toaster.warning(error.message, 'Wijziging doorgevoerd');
+          this.router.refresh();
+          this.router.replaceWith(
+            'organizations.organization.sites',
+            organization.id,
+          );
+          return;
+        }
+        if (error.held) {
+          // Nothing is created: the new records are unloaded and the
+          // organisation is back at the backend's state.
+          await this.showHeldRequest(
+            heldRequestNotice(error, [
+              [organization, ORGANIZATION_SITE_LABELS],
+            ]),
+          );
+          return;
+        }
+        // The records keep their edits so the user can correct and retry,
+        // unless the outcome is unknown, a retry could create the site
+        // twice, or the apply failed: saving stays blocked.
+        this.saveError = error.message;
+        this.saveBlocked = error.outcomeUnknown || error.applyFailed;
+        this.failedRequestId = error.applyFailed ? error.requestId : null;
+        return;
+      }
+
+      this.router.replaceWith(
+        'organizations.organization.sites.site',
+        saved.get(site).id,
+      );
     }
   });
 
+  /**
+   * Start the page anew after the change-request service held the save:
+   * refreshing the route creates new records for the form, which is built
+   * again, and the notice says why the site was not added. Refreshing resets
+   * this controller (`resetController`), so the notice is set afterwards.
+   * When the refresh fails, the router shows the error page, where the
+   * notice would not be seen.
+   *
+   * @param {Object} heldRequest - see `heldRequest`
+   */
+  async showHeldRequest(heldRequest) {
+    try {
+      await this.router.refresh('organizations.organization.sites.new');
+    } catch (error) {
+      reportHeldRequest(this.toaster, error, heldRequest.waiting);
+      return;
+    }
+    this.formRevision += 1;
+    this.heldRequest = heldRequest;
+    this.saveBlocked = heldRequest.reloadFailed;
+  }
+
   reset() {
     this.isPrimarySite = false;
+    this.saveError = null;
+    this.saveBlocked = false;
+    this.heldRequest = null;
+    this.failedRequestId = null;
     this.removeUnsavedRecords();
   }
 
   removeUnsavedRecords() {
-    let { site, address, contact, secondaryContact } = this.model;
+    let { site, address, contact, secondaryContact, organization } = this.model;
 
-    if (site.isNew) {
-      site.deleteRecord();
-      site.unloadRecord();
-    }
+    // The site the page added to the organisation goes with it
+    this.changeRequests.rollbackRelationships(organization);
 
-    if (address.isNew) {
-      address.deleteRecord();
-      address.unloadRecord();
-    }
-
-    if (contact.isNew) {
-      contact.deleteRecord();
-      contact.unloadRecord();
-    }
-
-    if (secondaryContact.isNew) {
-      secondaryContact.deleteRecord();
-      secondaryContact.unloadRecord();
+    // Once the change request that created them is applied the new records
+    // are unloaded already.
+    for (let record of [site, address, contact, secondaryContact]) {
+      if (isLoaded(record) && record.isNew) {
+        record.deleteRecord();
+        record.unloadRecord();
+      }
     }
   }
 

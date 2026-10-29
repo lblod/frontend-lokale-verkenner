@@ -13,14 +13,15 @@ import { action } from '@ember/object';
 
 export default class OrganizationsOrganizationCoreDataEditRoute extends Route {
   @service store;
-  @service currentSession;
+  @service changeRequests;
   @service router;
   @service scopeOfOperation;
 
-  locationsInScope = [];
-
   beforeModel() {
-    if (!this.currentSession.canEdit) {
+    // The organisation of the transition, which may differ from the one on
+    // screen when the page is opened from elsewhere.
+    const { id } = this.paramsFor('organizations.organization');
+    if (!this.changeRequests.canEditOrganization(id)) {
       this.router.transitionTo('unauthorized');
     }
   }
@@ -95,8 +96,9 @@ export default class OrganizationsOrganizationCoreDataEditRoute extends Route {
     const regions =
       await this.scopeOfOperation.getReferentieregiosInScope(organization);
 
-    this.locationsInScope =
-      await this.scopeOfOperation.getLocationsInScope(organization);
+    // The werkingsgebied is shown, not edited: it changes through a
+    // veranderingsgebeurtenis
+    const scopeLabel = await this.scopeOfOperation.getScopeLabel(organization);
 
     const vendors = await organization.vendors;
 
@@ -114,6 +116,7 @@ export default class OrganizationsOrganizationCoreDataEditRoute extends Route {
       structuredIdentifierNIS,
       structuredIdentifierOVO,
       regions,
+      scopeLabel,
       vendors,
     };
   }
@@ -146,11 +149,5 @@ export default class OrganizationsOrganizationCoreDataEditRoute extends Route {
 
       return missingIdentifiers;
     }, []);
-  }
-
-  setupController(controller) {
-    super.setupController(...arguments);
-
-    controller.set('locationsInScope', this.locationsInScope);
   }
 }
