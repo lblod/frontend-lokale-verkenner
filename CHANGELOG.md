@@ -1,3 +1,16 @@
+## v0.0.1 (2026-10-30)
+
+The first release of Lokale Verkenner. It builds on frontend-organization-portal v1.50.0, the frontend of the Organisatieportaal (OP).
+
+#### :rocket: Enhancement
+* [#3](https://github.com/lblod/frontend-lokale-verkenner/pull/3) [RVS-37] Request screens: Alle aanvragen, the Aanvraagformulier and the decision modals ([@bdevloed](https://github.com/bdevloed))
+* [#2](https://github.com/lblod/frontend-lokale-verkenner/pull/2) [RVS-28] Save kerngegevens and vestigingen through change requests ([@bdevloed](https://github.com/bdevloed))
+* [#1](https://github.com/lblod/frontend-lokale-verkenner/pull/1) [RVS-38] Introduce mock login ([@aatauil](https://github.com/aatauil))
+
+#### Committers: 2
+- Achraf Atauil ([@aatauil](https://github.com/aatauil))
+- Boris De Vloed ([@bdevloed](https://github.com/bdevloed))
+
 ## v1.50.0 (2026-10-16)
 
 #### :rocket: Enhancement
