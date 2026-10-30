@@ -1,3 +1,11 @@
+## v0.0.2 (2026-10-30)
+
+#### :bug: Bug Fix
+* [#4](https://github.com/lblod/frontend-lokale-verkenner/pull/4) Set the active role when the session loads ([@bdevloed](https://github.com/bdevloed))
+
+#### Committers: 1
+- Boris De Vloed ([@bdevloed](https://github.com/bdevloed))
+
 ## v0.0.1 (2026-10-30)
 
 The first release of Lokale Verkenner. It builds on frontend-organization-portal v1.50.0, the frontend of the Organisatieportaal (OP).
