@@ -10,7 +10,6 @@ import { showErrorPage } from 'frontend-organization-portal/utils/error';
 export default class ApplicationRoute extends Route {
   @service currentSession;
   @service session;
-  @service role;
   @service router;
   @service intl;
 
@@ -20,7 +19,6 @@ export default class ApplicationRoute extends Route {
 
     try {
       await this.currentSession.load();
-      this.role.setActiveRole(this.currentSession.roles?.[0] ?? null);
     } catch {
       this.router.transitionTo('auth.logout');
     }

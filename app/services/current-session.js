@@ -44,6 +44,10 @@ export default class CurrentSessionService extends Service {
       }
       let uniqueRoles = new Set(accountRoles);
       this.roles = [...uniqueRoles];
+      // The active role is the account's first one. Set here, it holds for
+      // the boot of the app and for a login in a running app alike; the
+      // routes send a session without one back to index.
+      this.role.setActiveRole(this.roles[0] ?? null);
 
       // The group is not defined for acm idm logins, so only resolve it when
       // the session data provides one (e.g. mock login).
