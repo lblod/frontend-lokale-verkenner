@@ -174,6 +174,27 @@ module('Acceptance | kerngegevens bewerken', function (hooks) {
     sinon.restore();
   });
 
+  test('with the contact-data flag on, the contact card is edited instead of the notice', async function (assert) {
+    this.owner.lookup('service:features').setup({ 'edit-contact-data': true });
+
+    await visit('/organisaties/org-agb/kerngegevens/edit');
+
+    for (const id of [
+      'site-contact-phone-number',
+      'site-contact-secondary-phone-number',
+      'site-contact-email',
+      'site-contact-website',
+    ]) {
+      assert.dom(`#${id}`).exists(`the contact field ${id} is editable`);
+    }
+    // The organisation has no primary site: the address starts in search
+    // mode, with the way to enter it manually
+    assert.dom('button.au-c-button--link').includesText('Vul adres manueel in');
+    assert
+      .dom('#edit-core-info-form')
+      .doesNotIncludeText('De primaire contactgegevens kunnen niet langer');
+  });
+
   test('juridische vorm, werkingsgebied and qualifications are shown, with the way to change them: a veranderingsgebeurtenis', async function (assert) {
     await visit('/organisaties/org-agb/kerngegevens/edit');
 
