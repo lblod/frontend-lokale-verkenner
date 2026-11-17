@@ -73,6 +73,7 @@ const INCLUDED = [
 const TYPES = {
   [CHANGE_EVENT_TYPE.NAME_CHANGE]: 'Naamswijziging',
   [CHANGE_EVENT_TYPE.OPRICHTING]: 'Oprichting',
+  [CHANGE_EVENT_TYPE.WERKINGSGEBIED_CHANGE]: 'Wijziging werkingsgebied',
   [CHANGE_EVENT_TYPE.FUSIE]: 'Fusie',
   [CHANGE_EVENT_TYPE.RECOGNITION_GRANTED]: 'Erkenning toegekend',
 };
@@ -214,5 +215,35 @@ module('Acceptance | veranderingsgebeurtenis aanvragen', function (hooks) {
       ),
     );
     assert.dom('#change-event-resulting-name').exists('the new name is asked');
+    assert
+      .dom('form')
+      .includesText('Huidige naam AGB Aalst', 'next to the current name');
+  });
+
+  test('a werkingsgebied change shows the current werkingsgebied', async function (assert) {
+    await visit('/organisaties/org-agb/veranderingsgebeurtenissen/nieuw');
+
+    await click('#change-event-type');
+    await click(
+      [...document.querySelectorAll('.ember-power-select-option')].find(
+        (option) => option.textContent.includes('Wijziging werkingsgebied'),
+      ),
+    );
+
+    assert.dom('#change-event-scope').exists('the new werkingsgebied is asked');
+    assert
+      .dom('form')
+      .includesText(
+        'Huidig werkingsgebied Aalst',
+        'the label the scope-of-operation service gives the current one',
+      );
+    assert.true(
+      this.fetch
+        .getCalls()
+        .some(({ args: [url] }) =>
+          String(url).includes('/scope-of-operation/locations-in-scope/'),
+        ),
+      'the locations of the current werkingsgebied are asked to prefill the new one',
+    );
   });
 });

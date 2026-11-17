@@ -203,6 +203,11 @@ module(
       assert.strictEqual((await changeEvent.decision)?.id, decision.id);
       const result = records[2];
       assert.strictEqual(result.resultingName, 'Stad Aalst');
+      assert.strictEqual(
+        result.originalName,
+        'Aalst',
+        'the result keeps the name the event changes',
+      );
       assert.strictEqual((await result.status)?.id, ORGANIZATION_STATUS.ACTIVE);
       assert.strictEqual((await result.resultingOrganization)?.id, 'org-1');
       assert.strictEqual(
@@ -432,6 +437,332 @@ module(
           REQUEST_ID,
         ),
       );
+    });
+
+    /**
+     * A legal form, a werkingsgebied (as one location) and two
+     * qualifications, given to the organisation of the form as its current
+     * values; `other*` are the values it does not have.
+     */
+    function giveCurrentValues(store, organization) {
+      const [
+        legalForm,
+        otherLegalForm,
+        scope,
+        otherLocation,
+        qualification,
+        otherQualification,
+      ] = store.push({
+        data: [
+          { type: 'concept', id: 'legal-form-1', attributes: { label: 'AGB' } },
+          { type: 'concept', id: 'legal-form-2', attributes: { label: 'vzw' } },
+          { type: 'location', id: 'aalst', attributes: { label: 'Aalst' } },
+          { type: 'location', id: 'gent', attributes: { label: 'Gent' } },
+          {
+            type: 'additional-qualification-code',
+            id: 'qualification-1',
+            attributes: { label: 'Erkend' },
+          },
+          {
+            type: 'additional-qualification-code',
+            id: 'qualification-2',
+            attributes: { label: 'Gesubsidieerd' },
+          },
+        ],
+      });
+      organization.legalForm = legalForm;
+      organization.scope = scope;
+      organization.additionalQualifications = [qualification];
+      return {
+        legalForm,
+        otherLegalForm,
+        scope,
+        otherLocation,
+        qualification,
+        otherQualification,
+      };
+    }
+
+    test('a new value that equals the current one is refused, for each type that changes a field', async function (assert) {
+      const { controller } = this;
+
+      let form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.NAME_CHANGE,
+      );
+      controller.resultingName = ' Aalst ';
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+      assert.strictEqual(
+        form.changeEvent.error.resultingName?.message,
+        'De huidige en nieuwe waarde kunnen niet hetzelfde zijn.',
+        'the current name',
+      );
+
+      form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.LEGAL_FORM_CHANGE,
+      );
+      let current = giveCurrentValues(this.store, form.organization);
+      controller.selectedResultingLegalForm = current.legalForm;
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+      assert.strictEqual(
+        form.changeEvent.error.resultingLegalForm?.message,
+        'De huidige en nieuwe waarde kunnen niet hetzelfde zijn.',
+        'the current legal form',
+      );
+
+      form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.WERKINGSGEBIED_CHANGE,
+      );
+      current = giveCurrentValues(this.store, form.organization);
+      controller.currentLocationsInScope = [current.scope];
+      controller.selectedResultingLocations = [current.scope];
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+      assert.strictEqual(
+        form.changeEvent.error.resultingScope?.message,
+        'De huidige en nieuwe waarde kunnen niet hetzelfde zijn.',
+        'the current werkingsgebied',
+      );
+
+      form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.ADDITIONAL_QUALIFICATION_CHANGE,
+      );
+      current = giveCurrentValues(this.store, form.organization);
+      controller.selectedResultingAdditionalQualifications = [
+        current.qualification,
+      ];
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+      assert.strictEqual(
+        form.changeEvent.error.resultingAdditionalQualifications?.message,
+        'De huidige en nieuwe waarde kunnen niet hetzelfde zijn.',
+        'the current qualifications',
+      );
+
+      assert.true(this.submit.notCalled, 'nothing is sent');
+    });
+
+    test('a legal form, werkingsgebied or qualifications change keeps the current value on the result before the organisation follows the event', async function (assert) {
+      const { controller } = this;
+      sinon
+        .stub(
+          this.owner.lookup('service:scope-of-operation'),
+          'getScopeForLocations',
+        )
+        .callsFake(async (...locations) => locations[0]);
+      this.submit.rejects(
+        new ChangeRequestError('De aanvraag wacht op ABB.', {
+          status: 201,
+          held: true,
+          waiting: true,
+          requestId: REQUEST_ID,
+        }),
+      );
+
+      let form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.LEGAL_FORM_CHANGE,
+      );
+      let current = giveCurrentValues(this.store, form.organization);
+      controller.selectedResultingLegalForm = current.otherLegalForm;
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+      let result = this.submit.lastCall.args[2].find(
+        (record) => record.constructor.modelName === 'change-event-result',
+      );
+      assert.strictEqual(
+        (await result.originalLegalForm)?.id,
+        'legal-form-1',
+        'the current legal form',
+      );
+      assert.strictEqual((await result.resultingLegalForm)?.id, 'legal-form-2');
+      assert.strictEqual(
+        (await form.organization.legalForm)?.id,
+        'legal-form-2',
+        'the organisation follows the event',
+      );
+      assert.notOk(result.originalName, 'nothing else is kept');
+      assert.notOk(result.originalScope);
+      assert.deepEqual(result.originalAdditionalQualifications.slice(), []);
+
+      form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.WERKINGSGEBIED_CHANGE,
+      );
+      current = giveCurrentValues(this.store, form.organization);
+      controller.currentLocationsInScope = [current.scope];
+      controller.selectedResultingLocations = [current.otherLocation];
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+      result = this.submit.lastCall.args[2].find(
+        (record) => record.constructor.modelName === 'change-event-result',
+      );
+      assert.strictEqual(
+        result.originalScope?.id,
+        'aalst',
+        'the current werkingsgebied',
+      );
+      assert.strictEqual(result.resultingScope?.id, 'gent');
+      assert.strictEqual((await form.organization.scope)?.id, 'gent');
+
+      form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.ADDITIONAL_QUALIFICATION_CHANGE,
+      );
+      current = giveCurrentValues(this.store, form.organization);
+      controller.selectedResultingAdditionalQualifications = [
+        current.qualification,
+        current.otherQualification,
+      ];
+      await controller.submitRequestTask.perform({ preventDefault() {} });
+      result = this.submit.lastCall.args[2].find(
+        (record) => record.constructor.modelName === 'change-event-result',
+      );
+      assert.deepEqual(
+        result.originalAdditionalQualifications.map(({ id }) => id),
+        ['qualification-1'],
+        'the current qualifications',
+      );
+      assert.deepEqual(
+        result.resultingAdditionalQualifications.map(({ id }) => id),
+        ['qualification-1', 'qualification-2'],
+      );
+      assert.deepEqual(
+        form.organization.additionalQualifications.map(({ id }) => id),
+        ['qualification-1', 'qualification-2'],
+      );
+      assert.strictEqual(this.submit.callCount, 3);
+    });
+
+    test('choosing a type prefills the current werkingsgebied or qualifications and clears what another type filled in', async function (assert) {
+      const { controller } = this;
+      const form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.NAME_CHANGE,
+      );
+      const current = giveCurrentValues(this.store, form.organization);
+      const locationsInScope = sinon
+        .stub(
+          this.owner.lookup('service:scope-of-operation'),
+          'getLocationsInScope',
+        )
+        .resolves([current.scope]);
+      const [werkingsgebied, qualifications, legalForm] = this.store.push({
+        data: [
+          CHANGE_EVENT_TYPE.WERKINGSGEBIED_CHANGE,
+          CHANGE_EVENT_TYPE.ADDITIONAL_QUALIFICATION_CHANGE,
+          CHANGE_EVENT_TYPE.LEGAL_FORM_CHANGE,
+        ].map((id) => ({
+          type: 'change-event-type',
+          id,
+          attributes: { label: id },
+        })),
+      });
+      controller.resultingName = 'Stad Aalst';
+
+      await controller.updateChangeEventType(werkingsgebied);
+
+      assert.strictEqual(form.changeEvent.type, werkingsgebied);
+      assert.true(locationsInScope.calledOnceWith(form.organization));
+      assert.deepEqual(
+        controller.selectedResultingLocations.map(({ id }) => id),
+        ['aalst'],
+        'the werkingsgebied starts from the current one',
+      );
+      assert.deepEqual(
+        controller.currentLocationsInScope.map(({ id }) => id),
+        ['aalst'],
+      );
+      assert.strictEqual(controller.resultingName, null, 'cleared');
+
+      await controller.updateChangeEventType(qualifications);
+
+      assert.deepEqual(controller.selectedResultingLocations, []);
+      assert.strictEqual(controller.currentLocationsInScope, null);
+      assert.deepEqual(
+        controller.selectedResultingAdditionalQualifications.map(
+          ({ id }) => id,
+        ),
+        ['qualification-1'],
+        'the qualifications start from the current ones',
+      );
+
+      controller.selectedResultingAdditionalQualifications.push(
+        current.otherQualification,
+      );
+      assert.deepEqual(
+        form.organization.additionalQualifications.map(({ id }) => id),
+        ['qualification-1'],
+        'a copy: the organisation keeps its qualifications',
+      );
+
+      await controller.updateChangeEventType(legalForm);
+      assert.deepEqual(
+        controller.selectedResultingAdditionalQualifications,
+        [],
+      );
+      assert.strictEqual(
+        controller.selectedResultingLegalForm,
+        null,
+        'the legal form is chosen anew',
+      );
+    });
+
+    test('without an answer of the scope-of-operation service the werkingsgebied starts empty, and a type chosen meanwhile wins', async function (assert) {
+      const { controller } = this;
+      const form = setupForm(
+        this.store,
+        controller,
+        CHANGE_EVENT_TYPE.NAME_CHANGE,
+      );
+      const current = giveCurrentValues(this.store, form.organization);
+      const warn = sinon.stub(console, 'warn');
+      const locationsInScope = sinon.stub(
+        this.owner.lookup('service:scope-of-operation'),
+        'getLocationsInScope',
+      );
+      const [werkingsgebied, name] = this.store.push({
+        data: [
+          CHANGE_EVENT_TYPE.WERKINGSGEBIED_CHANGE,
+          CHANGE_EVENT_TYPE.NAME_CHANGE,
+        ].map((id) => ({
+          type: 'change-event-type',
+          id,
+          attributes: { label: id },
+        })),
+      });
+
+      // The service did not answer
+      locationsInScope.resolves(null);
+      await controller.updateChangeEventType(werkingsgebied);
+      assert.deepEqual(controller.selectedResultingLocations, []);
+      assert.strictEqual(controller.currentLocationsInScope, null);
+
+      // The locations could not be loaded
+      locationsInScope.rejects(new Error('Nope'));
+      await controller.updateChangeEventType(werkingsgebied);
+      assert.deepEqual(controller.selectedResultingLocations, []);
+      assert.true(warn.calledOnce);
+
+      // Another type was chosen while the locations were loading
+      let answer;
+      locationsInScope.callsFake(
+        () => new Promise((resolve) => (answer = resolve)),
+      );
+      const loading = controller.updateChangeEventType(werkingsgebied);
+      await controller.updateChangeEventType(name);
+      answer([current.scope]);
+      await loading;
+      assert.strictEqual(form.changeEvent.type, name);
+      assert.deepEqual(controller.selectedResultingLocations, []);
+      assert.strictEqual(controller.currentLocationsInScope, null);
     });
   },
 );
