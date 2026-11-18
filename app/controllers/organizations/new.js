@@ -488,8 +488,6 @@ export default class OrganizationsNewController extends Controller {
     if (!(
       organization.isAgb ||
       organization.isApb ||
-      // OP reads `isIGS`, which no model has, so OP leaves an IGS
-      // without type
       organization.isIgs ||
       organization.isPoliceZone ||
       organization.isAssistanceZone ||

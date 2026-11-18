@@ -436,6 +436,58 @@ module('Unit | Controller | organizations/new', function (hooks) {
     assert.true(findAll.notCalled);
   });
 
+  test('a new IGS gets the maatschappelijke zetel, a new gemeente no site type', async function (assert) {
+    const { controller } = this;
+    setupForm(this.store, controller);
+    this.findAll.resolves({
+      data: [
+        {
+          type: 'site-types',
+          id: 'f1381723dec42c0b6ba6492e41d6f5dd',
+          attributes: { label: 'Maatschappelijke zetel' },
+        },
+      ],
+    });
+    const [dienstverlenendeVereniging, gemeente] = this.store.push({
+      data: [
+        {
+          type: 'administrative-unit-classification-code',
+          id: CLASSIFICATION.DIENSTVERLENENDE_VERENIGING.id,
+          attributes: {
+            label: CLASSIFICATION.DIENSTVERLENENDE_VERENIGING.label,
+          },
+        },
+        {
+          type: 'administrative-unit-classification-code',
+          id: CLASSIFICATION.MUNICIPALITY.id,
+          attributes: { label: CLASSIFICATION.MUNICIPALITY.label },
+        },
+      ],
+    });
+
+    controller.organizationConverter(dienstverlenendeVereniging);
+    assert.true(
+      controller.currentOrganizationModel.isIgs,
+      'a dienstverlenende vereniging is an IGS',
+    );
+    assert.strictEqual(
+      (
+        await controller.registeredOfficeTypeFor(
+          controller.currentOrganizationModel,
+        )
+      )?.id,
+      'f1381723dec42c0b6ba6492e41d6f5dd',
+    );
+
+    controller.organizationConverter(gemeente);
+    assert.strictEqual(
+      await controller.registeredOfficeTypeFor(
+        controller.currentOrganizationModel,
+      ),
+      null,
+    );
+  });
+
   test('a link row left empty is no link, and without link or date there is no besluit in the request', async function (assert) {
     const { controller } = this;
     const form = setupForm(this.store, controller);

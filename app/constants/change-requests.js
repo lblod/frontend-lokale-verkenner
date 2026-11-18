@@ -223,10 +223,14 @@ const FIELD_LABELS = {
     decision: 'Besluit',
   },
   'change-event-results': {
+    'original-name': 'Oude naam',
     'resulting-name': 'Nieuwe naam',
     status: 'Resulterende status',
+    'original-legal-form': 'Oude juridische vorm',
     'resulting-legal-form': 'Resulterende juridische vorm',
+    'original-scope': 'Oud werkingsgebied',
     'resulting-scope': 'Resulterend werkingsgebied',
+    'original-additional-qualifications': 'Oude bijkomende kwalificatie(s)',
     'resulting-additional-qualifications':
       'Resulterende bijkomende kwalificatie(s)',
     'resulting-organization': 'Organisatie',

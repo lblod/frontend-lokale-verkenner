@@ -11,6 +11,7 @@ export default class OrganizationsOrganizationChangeEventsNewRoute extends Route
   @service router;
   @service store;
   @service changeRequests;
+  @service scopeOfOperation;
 
   beforeModel() {
     const { id } = this.paramsFor('organizations.organization');
@@ -34,6 +35,10 @@ export default class OrganizationsOrganizationChangeEventsNewRoute extends Route
       organization.scope,
       organization.hasMany('additionalQualifications').reload(),
     ]);
+    // Shown next to the new werkingsgebied; undefined without a scope or
+    // when the scope-of-operation service does not answer
+    const currentScopeLabel =
+      await this.scopeOfOperation.getScopeLabel(organization);
 
     const changeEvent = this.store.createRecord('change-event', {
       originalOrganizations: [organization],
@@ -44,6 +49,7 @@ export default class OrganizationsOrganizationChangeEventsNewRoute extends Route
       organization,
       changeEvent,
       decision,
+      currentScopeLabel,
     };
   }
 

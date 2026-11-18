@@ -32,6 +32,9 @@ export const RESULTING_STATUS_FOR_CHANGE_EVENT_TYPE = {
   [CHANGE_EVENT_TYPE.LEGAL_FORM_CHANGE]: ORGANIZATION_STATUS.ACTIVE,
 };
 
+const SAME_VALUE_ERROR_MESSAGE =
+  'De huidige en nieuwe waarde kunnen niet hetzelfde zijn.';
+
 /**
  * The form that requests a veranderingsgebeurtenis about one organisation:
  * the change event with its besluit, its result (the resulting status, legal
@@ -39,6 +42,11 @@ export const RESULTING_STATUS_FOR_CHANGE_EVENT_TYPE = {
  * organisation the event changes, submitted as one change request
  * (aggregate `change-event`). The event is recorded and the organisation
  * changed when ABB approves; ABB's own request is applied at once.
+ *
+ * As in OP, the form shows the organisation's current name, legal form,
+ * werkingsgebied or qualifications next to the new one, refuses a new value
+ * that equals the current one, and keeps the current value on the result as
+ * its original value.
  *
  * Events that involve several organisations (fusie, samenvoeging) are not
  * requests yet: the type select leaves them out. A new werkingsgebied comes
@@ -80,6 +88,13 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
    */
   changeEventResult = null;
 
+  /**
+   * The locations within the werkingsgebied of the organisation, loaded when
+   * the werkingsgebied type is chosen: they prefill the new werkingsgebied
+   * and the new one must differ from them. Null when they were not loaded.
+   */
+  currentLocationsInScope = null;
+
   isNameChangeType = isNameChangeType;
 
   /**
@@ -109,9 +124,43 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
     return this.appliesAtOnce ? 'Opslaan' : 'Aanvraag versturen';
   }
 
+  /**
+   * Choose the type of the event. A werkingsgebied or qualifications change
+   * starts from the organisation's current values, so that the submitter
+   * only changes what changed; switching types clears what the previous
+   * type filled in.
+   */
   @action
-  setType(type) {
+  async updateChangeEventType(type) {
     this.model.changeEvent.type = type;
+
+    this.selectedResultingLegalForm = null;
+    this.selectedResultingLocations = [];
+    this.selectedResultingAdditionalQualifications = [];
+    this.resultingName = null;
+    this.currentLocationsInScope = null;
+
+    if (type?.id === CHANGE_EVENT_TYPE.WERKINGSGEBIED_CHANGE) {
+      let locations = null;
+      try {
+        locations = await this.scopeOfOperation.getLocationsInScope(
+          this.model.organization,
+        );
+      } catch (error) {
+        console.warn('The current werkingsgebied could not be loaded', error);
+      }
+
+      // Unless another type was chosen meanwhile. Without the locations (the
+      // scope-of-operation service did not answer) the field starts empty.
+      if (this.model.changeEvent.type === type && locations) {
+        this.currentLocationsInScope = locations;
+        this.selectedResultingLocations = locations;
+      }
+    } else if (type?.id === CHANGE_EVENT_TYPE.ADDITIONAL_QUALIFICATION_CHANGE) {
+      this.selectedResultingAdditionalQualifications = (
+        this.model.organization.additionalQualifications ?? []
+      ).slice();
+    }
   }
 
   @action
@@ -180,6 +229,46 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
     if (isNameChangeType(changeEvent.type) && !this.resultingName) {
       changeEvent.addError('resultingName', 'Vul de nieuwe naam in');
     }
+
+    // A new value that equals the organisation's current value changes
+    // nothing: refused, so that no event is requested by accident
+    if (
+      isNameChangeType(changeEvent.type) &&
+      this.resultingName &&
+      this.resultingName.trim() === organization.abbName?.trim()
+    ) {
+      changeEvent.addError('resultingName', SAME_VALUE_ERROR_MESSAGE);
+    }
+    if (
+      this.isLegalFormChange &&
+      this.selectedResultingLegalForm &&
+      this.selectedResultingLegalForm.id === (await organization.legalForm)?.id
+    ) {
+      changeEvent.addError('resultingLegalForm', SAME_VALUE_ERROR_MESSAGE);
+    }
+    if (
+      changeEvent.isWerkingsgebiedChangeEvent &&
+      this.selectedResultingLocations.length > 0 &&
+      containsSameIds(
+        this.selectedResultingLocations,
+        this.currentLocationsInScope ?? [],
+      )
+    ) {
+      changeEvent.addError('resultingScope', SAME_VALUE_ERROR_MESSAGE);
+    }
+    if (
+      isAdditionalQualificationChangeEvent(changeEvent) &&
+      this.selectedResultingAdditionalQualifications.length > 0 &&
+      containsSameIds(
+        this.selectedResultingAdditionalQualifications,
+        organization.additionalQualifications ?? [],
+      )
+    ) {
+      changeEvent.addError(
+        'resultingAdditionalQualifications',
+        SAME_VALUE_ERROR_MESSAGE,
+      );
+    }
     if (this.hasValidationErrors) {
       return;
     }
@@ -216,6 +305,24 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
       ? this.resultingName
       : null;
 
+    // The organisation's current value of what the event changes, kept on
+    // the result as its original value. Taken before the organisation
+    // follows the event below; the type cannot change once the event is
+    // recorded, so the other values need not be kept.
+    const originalName = isNameChangeType(changeEvent.type)
+      ? organization.abbName
+      : null;
+    const originalLegalForm = this.isLegalFormChange
+      ? await organization.legalForm
+      : null;
+    const originalScope = changeEvent.isWerkingsgebiedChangeEvent
+      ? await organization.scope
+      : null;
+    const originalAdditionalQualifications =
+      isAdditionalQualificationChangeEvent(changeEvent)
+        ? (organization.additionalQualifications ?? []).slice()
+        : [];
+
     const changeEventResult = this.store.createRecord('change-event-result', {
       status: resultingStatus,
       resultingLegalForm,
@@ -225,6 +332,19 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
       resultingOrganization: organization,
       resultFrom: changeEvent,
     });
+    if (originalName) {
+      changeEventResult.originalName = originalName;
+    }
+    if (originalLegalForm) {
+      changeEventResult.originalLegalForm = originalLegalForm;
+    }
+    if (originalScope) {
+      changeEventResult.originalScope = originalScope;
+    }
+    if (originalAdditionalQualifications.length > 0) {
+      changeEventResult.originalAdditionalQualifications =
+        originalAdditionalQualifications;
+    }
     this.changeEventResult = changeEventResult;
     changeEvent.resultingOrganizations = [organization];
 
@@ -378,10 +498,22 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
     this.selectedResultingLocations = [];
     this.selectedResultingAdditionalQualifications = [];
     this.resultingName = null;
+    this.currentLocationsInScope = null;
     this.reason = '';
     this.saveError = null;
     this.saveBlocked = false;
   }
+}
+
+/**
+ * Whether both lists hold records with exactly the same ids, in any order.
+ */
+function containsSameIds(a = [], b = []) {
+  const idsA = a.map(({ id }) => id).sort();
+  const idsB = b.map(({ id }) => id).sort();
+  return (
+    idsA.length === idsB.length && idsA.every((id, index) => id === idsB[index])
+  );
 }
 
 /**

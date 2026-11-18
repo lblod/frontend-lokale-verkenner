@@ -2756,6 +2756,66 @@ module('Unit | Service | change-requests', function (hooks) {
         },
       });
     });
+
+    test('change-event: the result carries the original values under the keys of the resources model', async function (assert) {
+      const [organization, status, type, legalForm, scope, qualification] =
+        this.store.push({
+          data: [
+            {
+              type: 'administrative-unit',
+              id: 'org-1',
+              attributes: { name: 'AGB Aalst', legalName: 'AGB Aalst' },
+            },
+            { type: 'organization-status-code', id: 'status-active' },
+            { type: 'change-event-type', id: 'type-1' },
+            { type: 'concept', id: 'legal-form-1' },
+            { type: 'location', id: 'location-1' },
+            { type: 'additional-qualification-code', id: 'qualification-1' },
+          ],
+        });
+      const changeEvent = this.store.createRecord('change-event', {
+        type,
+        date: new Date(2026, 10, 1),
+        originalOrganizations: [organization],
+      });
+      // Every original value at once, to check each kind of key: an
+      // attribute, an async and a sync belongsTo and a sync hasMany
+      const result = this.store.createRecord('change-event-result', {
+        status,
+        resultingOrganization: organization,
+        resultFrom: changeEvent,
+      });
+      result.originalName = 'AGB Aalst';
+      result.originalLegalForm = legalForm;
+      result.originalScope = scope;
+      result.originalAdditionalQualifications = [qualification];
+      waitForAbb(this.fetch, this.adapter);
+
+      await rejection(
+        this.service.submit('change-event', 'org-1', [changeEvent, result]),
+      );
+
+      const { data } = postedDocument(
+        this.fetch,
+      ).data.attributes.operations.find(
+        (operation) => operation.data.type === 'change-event-results',
+      );
+      assert.deepEqual(data.attributes, { 'original-name': 'AGB Aalst' });
+      assert.deepEqual(data.relationships['original-legal-form'], {
+        data: { type: 'concepts', id: 'legal-form-1' },
+      });
+      assert.deepEqual(data.relationships['original-scope'], {
+        data: { type: 'locations', id: 'location-1' },
+      });
+      assert.deepEqual(
+        data.relationships['original-additional-qualifications'],
+        {
+          data: [
+            { type: 'additional-qualification-codes', id: 'qualification-1' },
+          ],
+        },
+      );
+    });
   });
 
   module('answers without a stored request', function () {

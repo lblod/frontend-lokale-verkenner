@@ -37,12 +37,7 @@ export const CentralWorshipServiceCodeList = [
   CLASSIFICATION.CENTRAL_WORSHIP_SERVICE.id,
 ];
 
-/**
- * The classifications with change events of their own (recognitions, ...):
- * the worship services and their central boards. `ChangeEventTypeSelect`
- * imports it; OP v1.50.0 never exported it, which left the select empty for
- * every organisation.
- */
+// Classifications that get the worship-only change event types
 export const WorshipCodeList = [
   ...WorshipServiceCodeList,
   ...CentralWorshipServiceCodeList,

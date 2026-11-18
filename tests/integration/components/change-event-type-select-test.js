@@ -64,6 +64,30 @@ module('Integration | Component | change-event-type-select', function (hooks) {
     ]);
   });
 
+  test('it keeps the worship-only types for a worship service', async function (assert) {
+    const store = this.owner.lookup('service:store');
+    this.classification = store.push({
+      data: {
+        type: 'administrative-unit-classification-code',
+        id: CLASSIFICATION.WORSHIP_SERVICE.id,
+        attributes: { label: 'Bestuur van de eredienst' },
+      },
+    });
+
+    await render(hbs`
+      <ChangeEventTypeSelect
+        @id="change-event-type"
+        @organizationClassification={{this.classification}}
+        @onChange={{this.onChange}}
+      />
+    `);
+
+    assert.deepEqual(await options(), [
+      'Naamswijziging',
+      'Erkenning toegekend',
+    ]);
+  });
+
   test('it leaves out the types the caller excludes', async function (assert) {
     this.excluded = [CHANGE_EVENT_TYPE.CITY, CHANGE_EVENT_TYPE.FUSIE];
 
