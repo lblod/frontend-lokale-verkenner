@@ -108,6 +108,13 @@ module('Acceptance | module menu', function (hooks) {
     assert.dom().doesNotIncludeText('Personen');
   });
 
+  test('the index announces no Bestuursorganen', async function (assert) {
+    await visit('/');
+
+    assert.dom('.au-c-card').includesText('Gerelateerde organisaties');
+    assert.dom().doesNotIncludeText('Bestuursorganen');
+  });
+
   test("a gemeente's organization page offers no Bestuursorganen or Leidinggevenden link", async function (assert) {
     await visit('/organisaties/org-aalst');
 
@@ -119,5 +126,17 @@ module('Acceptance | module menu', function (hooks) {
       .doesNotExist();
     assert.dom('a[href="/organisaties/org-aalst/kerngegevens"]').exists();
     assert.dom('a[href="/organisaties/org-aalst/vestigingen"]').exists();
+  });
+});
+
+module('Acceptance | module menu | login page', function (hooks) {
+  setupApplicationTest(hooks);
+
+  test('the login page announces no Personen module and no Bestuursorganen', async function (assert) {
+    await visit('/login');
+
+    assert.dom('.au-c-card').includesText('Gerelateerde organisaties');
+    assert.dom().doesNotIncludeText('Personen');
+    assert.dom().doesNotIncludeText('Bestuursorganen');
   });
 });

@@ -78,9 +78,15 @@
                   <li>
                     Kerninformatie over organisaties
                   </li>
-                  <li>
-                    Bestuursorganen en mandaten
-                  </li>
+                  {{! Bestuursorganen en mandaten: hidden as long as the
+                      Bestuursorganen of an organisation are (see
+                      organizations/organization.hbs); remove this "if" to
+                      show it again. }}
+                  {{#if false}}
+                    <li>
+                      Bestuursorganen en mandaten
+                    </li>
+                  {{/if}}
                   <li>
                     Gerelateerde organisaties
                   </li>

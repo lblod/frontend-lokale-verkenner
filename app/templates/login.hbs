@@ -40,7 +40,13 @@
               <AuContent>
                 <ul>
                   <li>Kerninformatie over organisaties</li>
-                  <li>Bestuursorganen en mandaten</li>
+                  {{! Bestuursorganen en mandaten: hidden as long as the
+                      Bestuursorganen of an organisation are (see
+                      organizations/organization.hbs); remove this "if" to
+                      show it again. }}
+                  {{#if false}}
+                    <li>Bestuursorganen en mandaten</li>
+                  {{/if}}
                   <li>Gerelateerde organisaties</li>
                 </ul>
 
@@ -61,37 +67,41 @@
             </c.footer>
           </AuCard>
         </div>
-        <div class="au-o-grid__item au-u-1-2@small">
-          <AuCard @flex="true" as |c|>
-            <c.header @badgeSkin="brand" @badgeIcon="users">
-              <AuHeading @level="3" @skin="4">
-                Personen
-              </AuHeading>
-            </c.header>
-            <c.content>
-              <AuContent>
-                <ul>
-                  <li>Kerngegevens over personen</li>
-                  <li>Contactgegevens</li>
-                  <li>Posities</li>
-                </ul>
-              </AuContent>
-            </c.content>
-            <c.footer>
-              <p>
-                <a
-                  href={{config "userManual.module.people"}}
-                  class="au-c-link au-c-link--secondary"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <AuIcon @icon="manual" @alignment="left" />
-                  Handleiding (externe link)
-                </a>
-              </p>
-            </c.footer>
-          </AuCard>
-        </div>
+        {{! Personen: hidden as long as the module is (see index.hbs); remove
+            this "if" to show it again. }}
+        {{#if false}}
+          <div class="au-o-grid__item au-u-1-2@small">
+            <AuCard @flex="true" as |c|>
+              <c.header @badgeSkin="brand" @badgeIcon="users">
+                <AuHeading @level="3" @skin="4">
+                  Personen
+                </AuHeading>
+              </c.header>
+              <c.content>
+                <AuContent>
+                  <ul>
+                    <li>Kerngegevens over personen</li>
+                    <li>Contactgegevens</li>
+                    <li>Posities</li>
+                  </ul>
+                </AuContent>
+              </c.content>
+              <c.footer>
+                <p>
+                  <a
+                    href={{config "userManual.module.people"}}
+                    class="au-c-link au-c-link--secondary"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <AuIcon @icon="manual" @alignment="left" />
+                    Handleiding (externe link)
+                  </a>
+                </p>
+              </c.footer>
+            </AuCard>
+          </div>
+        {{/if}}
       </div>
     </div>
   </section>
