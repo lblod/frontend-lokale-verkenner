@@ -30,9 +30,10 @@
             </AuNavigationLink>
           </li>
         {{/if}}
-        {{! Bestuursorganen: hidden until the Lokale Verkenner implements the
-            module (RVS-28). The route stays open; show it again by dropping
-            the false. }}
+        {{! Bestuursorganen: hidden in the first version of the Lokale
+            Verkenner. The module waits for the mandatarissen and
+            leidinggevenden consumers (RVS-69). The route stays open; show it
+            again by dropping the false. }}
         {{#if (and @model.requiresGoverningBodies false)}}
           <li class="au-c-list-navigation__item">
             <AuNavigationLink
@@ -49,9 +50,10 @@
             </AuNavigationLink>
           </li>
         {{/if}}
-        {{! Leidinggevenden: hidden until the Lokale Verkenner implements the
-            module (RVS-28). The route stays open; show it again by dropping
-            the false. }}
+        {{! Leidinggevenden: hidden in the first version of the Lokale
+            Verkenner. The module waits for the mandatarissen and
+            leidinggevenden consumers (RVS-69). The route stays open; show it
+            again by dropping the false. }}
         {{#if (and @model.requiresFunctionaries false)}}
           <li class="au-c-list-navigation__item">
             <AuNavigationLink @route="organizations.organization.executives">

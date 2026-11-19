@@ -11,8 +11,9 @@
               Organisaties
             </AuNavigationLink>
           </li>
-          {{! Personen: hidden until the Lokale Verkenner implements the
-              module (RVS-28). The route stays open; uncomment to show it again. }}
+          {{! Personen: hidden in the first version of the Lokale Verkenner. The
+              module waits for the mandatarissen and leidinggevenden consumers
+              (RVS-69). The route stays open; remove this "if" to show it again. }}
           {{#if false}}
             <li class="au-c-list-navigation__item">
               <AuNavigationLink @route="people">
@@ -104,8 +105,9 @@
             </c.footer>
           </AuCard>
         </li>
-        {{! Personen: hidden until the Lokale Verkenner implements the module
-            (RVS-28). The route stays open; uncomment to show it again. }}
+        {{! Personen: hidden in the first version of the Lokale Verkenner. The
+            module waits for the mandatarissen and leidinggevenden consumers
+            (RVS-69). The route stays open; remove this "if" to show it again. }}
         {{#if false}}
           <li class="au-o-grid__item au-u-1-2@medium au-u-2-5@large">
             <AuCard @flex={{true}} as |c|>
