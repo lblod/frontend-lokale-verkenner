@@ -11,11 +11,15 @@
               Organisaties
             </AuNavigationLink>
           </li>
-          <li class="au-c-list-navigation__item">
-            <AuNavigationLink @route="people">
-              Personen
-            </AuNavigationLink>
-          </li>
+          {{! Personen: hidden until the Lokale Verkenner implements the
+              module (RVS-28). The route stays open; uncomment to show it again. }}
+          {{#if false}}
+            <li class="au-c-list-navigation__item">
+              <AuNavigationLink @route="people">
+                Personen
+              </AuNavigationLink>
+            </li>
+          {{/if}}
           <li class="au-c-list-navigation__item">
             <AuNavigationLink @route="aanvragen">
               Aanvragen
@@ -100,47 +104,51 @@
             </c.footer>
           </AuCard>
         </li>
-        <li class="au-o-grid__item au-u-1-2@medium au-u-2-5@large">
-          <AuCard @flex={{true}} as |c|>
-            <c.header @badgeSkin="brand" @badgeIcon="users">
-              <AuHeading @level="2" @skin="4">
-                Personen
-              </AuHeading>
-            </c.header>
-            <c.content>
-              <AuContent>
-                <ul>
-                  <li>
-                    Persoonlijke informatie over personen
-                  </li>
-                  <li>
-                    Contactinformatie
-                  </li>
-                  <li>
-                    Posities
-                  </li>
-                </ul>
+        {{! Personen: hidden until the Lokale Verkenner implements the module
+            (RVS-28). The route stays open; uncomment to show it again. }}
+        {{#if false}}
+          <li class="au-o-grid__item au-u-1-2@medium au-u-2-5@large">
+            <AuCard @flex={{true}} as |c|>
+              <c.header @badgeSkin="brand" @badgeIcon="users">
+                <AuHeading @level="2" @skin="4">
+                  Personen
+                </AuHeading>
+              </c.header>
+              <c.content>
+                <AuContent>
+                  <ul>
+                    <li>
+                      Persoonlijke informatie over personen
+                    </li>
+                    <li>
+                      Contactinformatie
+                    </li>
+                    <li>
+                      Posities
+                    </li>
+                  </ul>
 
-              </AuContent>
-            </c.content>
-            <c.footer>
-              <AuButtonGroup class="au-c-button-group--wrap">
-                <AuButton {{on "click" (fn this.goToContext "people")}}>
-                  Ga naar personen
-                </AuButton>
-                <a
-                  href={{config "userManual.module.people"}}
-                  class="au-c-button au-c-button--link-secondary"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <AuIcon @icon="manual" @alignment="left" />
-                  Handleiding (externe link)
-                </a>
-              </AuButtonGroup>
-            </c.footer>
-          </AuCard>
-        </li>
+                </AuContent>
+              </c.content>
+              <c.footer>
+                <AuButtonGroup class="au-c-button-group--wrap">
+                  <AuButton {{on "click" (fn this.goToContext "people")}}>
+                    Ga naar personen
+                  </AuButton>
+                  <a
+                    href={{config "userManual.module.people"}}
+                    class="au-c-button au-c-button--link-secondary"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <AuIcon @icon="manual" @alignment="left" />
+                    Handleiding (externe link)
+                  </a>
+                </AuButtonGroup>
+              </c.footer>
+            </AuCard>
+          </li>
+        {{/if}}
       </ul>
     </div>
   </:content>
