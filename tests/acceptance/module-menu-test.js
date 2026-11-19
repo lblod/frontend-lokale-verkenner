@@ -104,7 +104,8 @@ module('Acceptance | module menu', function (hooks) {
     assert.dom('a[href="/personen"]').doesNotExist();
     assert.dom('a[href="/organisaties"]').exists();
     assert.dom('a[href="/aanvragen"]').exists();
-    assert.dom('.au-c-card').doesNotIncludeText('Personen');
+    // The whole page: with a selector, only the first matching card is read
+    assert.dom().doesNotIncludeText('Personen');
   });
 
   test("a gemeente's organization page offers no Bestuursorganen or Leidinggevenden link", async function (assert) {
