@@ -48,7 +48,7 @@
     aria-label="organization-creation-form"
     {{on "submit" (perform this.submitRequestTask)}}
   >
-    <EditCard @containsRequiredFields={{true}}>
+    <EditCard>
       <:title>Organisatie</:title>
       <:card as |Card|>
         <Card.Columns>
@@ -342,7 +342,7 @@
       </:card>
     </EditCard>
 
-    <EditCard @containsRequiredFields={{true}}>
+    <EditCard>
       <:title>Oprichting</:title>
       <:card as |Card|>
         <Card.Columns>
@@ -394,7 +394,7 @@
             </Item>
           </:left>
           <:right as |Item|>
-            <Item @labelFor="request-reason" @alignTop={{true}}>
+            <Item @labelFor="request-reason">
               <:label>Toelichting bij de aanvraag</:label>
               <:content>
                 <AuTextarea

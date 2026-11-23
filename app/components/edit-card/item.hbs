@@ -1,14 +1,10 @@
 <div
-  class="au-c-card-item
-    {{if @alignTop 'au-c-card-item--align-top'}}
-    {{if @isGrid 'au-o-grid__item au-u-1-2@medium'}}"
+  class="au-c-card-item {{if @isGrid 'au-o-grid__item au-u-1-2@medium'}}"
   ...attributes
 >
   {{#if (has-block "label")}}
-    <div class="au-c-card-item__label au-c-card-item__label--edit">
+    <div class="au-c-card-item__label">
       <AuLabel
-        @required={{@required}}
-        @requiredLabel="*"
         @inline={{true}}
         @error={{@errorMessage}}
         @warning={{@warningMessage}}
@@ -16,16 +12,21 @@
         for={{@labelFor}}
       >
         {{yield to="label"}}
+        {{#if @required}}
+          <AuPill>Verplicht</AuPill>
+        {{/if}}
       </AuLabel>
     </div>
   {{/if}}
 
+  {{#if (has-block "helpText")}}
+    <AuHelpText @skin="tertiary">
+      <AuIcon @icon="info-circle" />{{~yield to="helpText"~}}
+    </AuHelpText>
+  {{/if}}
+
   {{#if (has-block "content")}}
-    <div
-      class="au-c-card-item__content
-        {{if (not (has-block 'label')) 'au-c-card-item__content--offset'}}
-        "
-    >
+    <div class="au-c-card-item__content">
       {{yield @errorMessage to="content"}}
 
       {{#if @errorMessage}}
@@ -36,10 +37,6 @@
         {{/if}}
       {{else if @warningMessage}}
         <AuHelpText @warning={{true}}>{{@warningMessage}}</AuHelpText>
-      {{/if}}
-
-      {{#if (has-block "helpText")}}
-        <AuHelpText @skin="tertiary">{{yield to="helpText"}}</AuHelpText>
       {{/if}}
     </div>
   {{/if}}
