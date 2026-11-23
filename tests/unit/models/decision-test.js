@@ -67,4 +67,34 @@ module('Unit | Model | decision', function (hooks) {
 
     assert.false(model.isEmpty);
   });
+
+  test('it is empty without links, text or no-link message', function (assert) {
+    const model = this.store().createRecord('decision', {
+      documentLinks: [],
+      description: '  ',
+      geenLinkBeschikbaar: '',
+    });
+
+    assert.true(model.isEmpty);
+  });
+
+  test('a decision with a text only is not empty and validates', async function (assert) {
+    const model = this.store().createRecord('decision', {
+      description: 'Besluit van de gemeenteraad van 1 oktober 2026',
+    });
+
+    assert.false(model.isEmpty);
+    assert.true(await model.validate());
+    assert.strictEqual(model.error, undefined);
+  });
+
+  test('a decision with a no-link message only is not empty and validates', async function (assert) {
+    const model = this.store().createRecord('decision', {
+      geenLinkBeschikbaar: 'Het besluit is niet online beschikbaar.',
+    });
+
+    assert.false(model.isEmpty);
+    assert.true(await model.validate());
+    assert.strictEqual(model.error, undefined);
+  });
 });

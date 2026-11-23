@@ -279,7 +279,7 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
     try {
       const resultingStatusId =
         RESULTING_STATUS_FOR_CHANGE_EVENT_TYPE[changeEvent.type.id] ??
-        (await organization.organizationStatus)?.id;
+        organization.belongsTo('organizationStatus').value()?.id;
       ({ content: resultingStatus } = await this.store.request(
         findRecord('organization-status-code', resultingStatusId),
       ));

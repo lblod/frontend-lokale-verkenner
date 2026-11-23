@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import sinon from 'sinon';
-import { click, currentURL, visit } from '@ember/test-helpers';
+import { click, currentURL, fillIn, visit } from '@ember/test-helpers';
 import { authenticateSession } from 'ember-simple-auth/test-support';
 import { setupApplicationTest } from 'frontend-organization-portal/tests/helpers';
 import { CLASSIFICATION } from 'frontend-organization-portal/models/administrative-unit-classification-code';
@@ -121,6 +121,14 @@ module('Acceptance | veranderingsgebeurtenis aanvragen', function (hooks) {
           return structuredClone({ data: AGB, included: INCLUDED });
         case 'additional-qualification-code':
           return { data: structuredClone(QUALIFICATION) };
+        case 'organization-status-code':
+          return {
+            data: {
+              type: 'organization-status-codes',
+              id,
+              attributes: { label: 'Actief' },
+            },
+          };
         case 'change-event-type':
           return { data: typeResource(id) };
         default:
@@ -245,5 +253,129 @@ module('Acceptance | veranderingsgebeurtenis aanvragen', function (hooks) {
         ),
       'the locations of the current werkingsgebied are asked to prefill the new one',
     );
+  });
+
+  /**
+   * Opens the change-event form of an oprichting and fills in what the
+   * request requires before the besluit.
+   */
+  async function fillOprichting(owner) {
+    await visit('/organisaties/org-agb/veranderingsgebeurtenissen/nieuw');
+    await click('#change-event-type');
+    await click(
+      [...document.querySelectorAll('.ember-power-select-option')].find(
+        (option) => option.textContent.includes('Oprichting'),
+      ),
+    );
+    const controller = owner.lookup(
+      'controller:organizations/organization/change-events/new',
+    );
+    controller.model.changeEvent.date = new Date(2026, 9, 1);
+  }
+
+  /**
+   * The besluit the page hands to the change-request service on submit.
+   */
+  async function submitDecision(assert, context) {
+    const service = context.owner.lookup('service:change-requests');
+    const submit = sinon.stub(service, 'submit').resolves({
+      get: () => ({ id: 'new-org' }),
+    });
+    sinon.stub(context.owner.lookup('service:router'), 'replaceWith');
+    await click('[data-test-submit-request]');
+    assert.true(submit.calledOnce, 'the request is sent');
+    const records = submit.firstCall.args[2];
+    const decisions = records.filter(
+      (record) => record.constructor.modelName === 'decision',
+    );
+    assert.strictEqual(decisions.length, 1, 'one besluit in the request');
+    return decisions[0];
+  }
+
+  test('the besluit asks whether a link is available, with three options', async function (assert) {
+    await fillOprichting(this.owner);
+
+    assert
+      .dom('#decision-links-yes-links')
+      .exists('one or more links is an option');
+    assert
+      .dom('#decision-links-yes-text')
+      .exists('a text instead of the link is an option');
+    assert
+      .dom('#decision-links-no')
+      .exists('no link is available is an option');
+    assert.strictEqual(
+      document
+        .querySelector('#decision-links-no')
+        ?.closest('label')
+        ?.textContent.trim(),
+      'Nee, ik heb geen link naar een besluit',
+      'its label',
+    );
+
+    const linksField = () =>
+      document
+        .querySelector('input[name="decision-links-choice"]')
+        ?.closest('.au-c-control-group')?.parentElement.textContent;
+
+    await click('#decision-links-yes-links');
+    assert.true(
+      linksField().includes('Nog geen links toegevoegd'),
+      'an empty choice shows the empty state',
+    );
+    await click(
+      [...document.querySelectorAll('button')].find((button) =>
+        button.textContent.includes('Nieuwe link toevoegen'),
+      ),
+    );
+    await fillIn('#change-event-decision-link-0', 'https://aalst.be/besluiten');
+    assert.dom('#change-event-decision-link-0').exists('the link row is added');
+    assert.false(
+      linksField().includes('Nog geen links toegevoegd'),
+      'the empty state is gone once a row exists',
+    );
+
+    await click('#decision-links-yes-text');
+    assert.dom('#decision-links-text-input').exists('the text is asked');
+    assert.dom('#decision-links-none-input').doesNotExist();
+    assert
+      .dom('#change-event-decision-link-0')
+      .doesNotExist('the link row is gone');
+  });
+
+  test('a besluit with a text only is saved without links', async function (assert) {
+    await fillOprichting(this.owner);
+
+    await click('#decision-links-yes-text');
+    await fillIn(
+      '#decision-links-text-input',
+      'Besluit van de gemeenteraad van 1 oktober 2026',
+    );
+    const decision = await submitDecision(assert, this);
+
+    assert.strictEqual(
+      decision.description,
+      'Besluit van de gemeenteraad van 1 oktober 2026',
+    );
+    assert.deepEqual(decision.documentLinks, [], 'no links are saved');
+    assert.notOk(decision.geenLinkBeschikbaar, 'no no-link message');
+  });
+
+  test('a besluit that says no link is available is saved with its message', async function (assert) {
+    await fillOprichting(this.owner);
+
+    await click('#decision-links-no');
+    await fillIn(
+      '#decision-links-none-input',
+      'Het besluit is niet online beschikbaar.',
+    );
+    const decision = await submitDecision(assert, this);
+
+    assert.strictEqual(
+      decision.geenLinkBeschikbaar,
+      'Het besluit is niet online beschikbaar.',
+    );
+    assert.deepEqual(decision.documentLinks, [], 'no links are saved');
+    assert.notOk(decision.description, 'no text');
   });
 });

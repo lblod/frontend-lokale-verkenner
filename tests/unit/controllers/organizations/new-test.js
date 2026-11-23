@@ -506,6 +506,90 @@ module('Unit | Controller | organizations/new', function (hooks) {
     assert.strictEqual(await form.changeEvent.decision, null);
   });
 
+  test('a besluit with a text only is submitted with the text and without links', async function (assert) {
+    const { controller } = this;
+    const form = setupForm(this.store, controller);
+    form.decision.documentLinks = [];
+    form.decision.description =
+      'Besluit van de gemeenteraad van 1 oktober 2026';
+    this.submit.rejects(new ChangeRequestError('Nee.', { status: 403 }));
+
+    await controller.submitRequestTask.perform({ preventDefault() {} });
+
+    assert.false(controller.hasValidationErrors);
+    const records = this.submit.firstCall.args[2];
+    assert.true(
+      records.some((record) => record.constructor.modelName === 'decision'),
+      'the besluit is part of the request',
+    );
+    assert.strictEqual(await form.changeEvent.decision, form.decision);
+    const decision = records.find(
+      (record) => record.constructor.modelName === 'decision',
+    );
+    assert.strictEqual(
+      decision.description,
+      'Besluit van de gemeenteraad van 1 oktober 2026',
+    );
+    assert.deepEqual(decision.documentLinks, [], 'no links');
+    assert.notOk(decision.geenLinkBeschikbaar, 'no no-link message');
+  });
+
+  test('a besluit that says no link is available is submitted with its message and neither links nor text', async function (assert) {
+    const { controller } = this;
+    const form = setupForm(this.store, controller);
+    form.decision.documentLinks = [];
+    form.decision.geenLinkBeschikbaar =
+      'Het besluit is niet online beschikbaar.';
+    this.submit.rejects(new ChangeRequestError('Nee.', { status: 403 }));
+
+    await controller.submitRequestTask.perform({ preventDefault() {} });
+
+    assert.false(controller.hasValidationErrors);
+    const decision = this.submit.firstCall.args[2].find(
+      (record) => record.constructor.modelName === 'decision',
+    );
+    assert.strictEqual(
+      decision.geenLinkBeschikbaar,
+      'Het besluit is niet online beschikbaar.',
+    );
+    assert.deepEqual(decision.documentLinks, [], 'no links');
+    assert.notOk(decision.description, 'no text');
+  });
+
+  test('a besluit with links only carries neither a text nor a no-link message', async function (assert) {
+    const { controller } = this;
+    setupForm(this.store, controller);
+    this.submit.rejects(new ChangeRequestError('Nee.', { status: 403 }));
+
+    await controller.submitRequestTask.perform({ preventDefault() {} });
+
+    const decision = this.submit.firstCall.args[2].find(
+      (record) => record.constructor.modelName === 'decision',
+    );
+    assert.deepEqual(decision.documentLinks, [
+      'https://aalst.be/besluiten/2026/123',
+    ]);
+    assert.notOk(decision.description, 'no text');
+    assert.notOk(decision.geenLinkBeschikbaar, 'no no-link message');
+  });
+
+  test('an untouched besluit is left out of the request, as before', async function (assert) {
+    const { controller } = this;
+    const form = setupForm(this.store, controller);
+    form.decision.documentLinks = [];
+    this.submit.rejects(new ChangeRequestError('Nee.', { status: 403 }));
+
+    await controller.submitRequestTask.perform({ preventDefault() {} });
+
+    assert.false(controller.hasValidationErrors);
+    assert.notOk(
+      this.submit.firstCall.args[2].some(
+        (record) => record.constructor.modelName === 'decision',
+      ),
+      'no besluit in the request',
+    );
+  });
+
   test('another attempt after a refusal sends the same records', async function (assert) {
     const { controller } = this;
     const form = setupForm(this.store, controller);

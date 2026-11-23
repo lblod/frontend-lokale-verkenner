@@ -1,7 +1,11 @@
 import { attr, belongsTo } from '@warp-drive/legacy/model';
 import AbstractValidationModel from './abstract-validation-model';
 import Joi from 'joi';
-import { validateBelongsToOptional, validateUrl } from '../validators/schema';
+import {
+  validateBelongsToOptional,
+  validateStringOptional,
+  validateUrl,
+} from '../validators/schema';
 
 export default class DecisionModel extends AbstractValidationModel {
   @attr('date') publicationDate;
@@ -11,6 +15,10 @@ export default class DecisionModel extends AbstractValidationModel {
     },
   })
   documentLinks;
+  // The plan says `@attr('string')`, but this app registers no `string`
+  // transform; a bare attr is how every other text attribute is declared.
+  @attr description;
+  @attr geenLinkBeschikbaar;
 
   @belongsTo('decision-activity', {
     inverse: 'givesCauseTo',
@@ -20,7 +28,12 @@ export default class DecisionModel extends AbstractValidationModel {
 
   get isEmpty() {
     // TODO: should this not also check for an activity?
-    return !(this.publicationDate || this.documentLinks?.some((link) => link));
+    return !(
+      this.publicationDate ||
+      this.documentLinks?.some((link) => link) ||
+      this.description?.trim() ||
+      this.geenLinkBeschikbaar?.trim()
+    );
   }
 
   get validationSchema() {
@@ -30,6 +43,8 @@ export default class DecisionModel extends AbstractValidationModel {
       documentLinks: Joi.array()
         .items(validateUrl('Geef een geldig internetadres in'))
         .optional(),
+      description: validateStringOptional(),
+      geenLinkBeschikbaar: validateStringOptional(),
       hasDecisionActivity: validateBelongsToOptional(),
     });
   }
