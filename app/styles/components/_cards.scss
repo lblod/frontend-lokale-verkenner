@@ -3,9 +3,6 @@
    Extends the default appuniversum card component
    ================================== */
 
-$card-label-width: 20rem; // This has to be wide enough to fit all labels properly
-$card-label-whitespace: $au-unit-small;
-
 // Read-only card
 .au-c-card--data {
   border-color: $au-gray-100;
@@ -35,28 +32,15 @@ $card-label-whitespace: $au-unit-small;
 // Card item
 .au-c-card-item {
   display: flex;
+  flex-direction: column;
 
   & + & {
     margin-top: $au-unit-small;
   }
-
-  @include mq($until: small) {
-    flex-direction: column;
-  }
-}
-
-.au-c-card-item--align-top {
-  @extend .au-u-flex--vertical-start;
 }
 
 .au-c-card-item__label {
   width: 100%;
-
-  @include mq(small) {
-    flex-basis: $card-label-width;
-    flex-shrink: 0;
-    margin-right: $card-label-whitespace;
-  }
 }
 
 .au-c-card-item__label--data {
@@ -64,25 +48,6 @@ $card-label-whitespace: $au-unit-small;
   color: $au-gray-600;
 }
 
-.au-c-card-item__label--edit {
-  @include mq(small) {
-    .au-c-label {
-      margin-bottom: 0;
-    }
-  }
-}
-
 .au-c-card-item__content {
   width: 100%;
-
-  @include mq(small) {
-    flex-shrink: 1;
-    flex-grow: 1;
-  }
-}
-
-.au-c-card-item__content--offset {
-  @include mq(small) {
-    margin-left: $card-label-width + $card-label-whitespace;
-  }
 }

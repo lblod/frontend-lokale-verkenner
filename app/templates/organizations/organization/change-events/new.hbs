@@ -51,7 +51,7 @@
       </AuAlert>
     {{/unless}}
 
-    <EditCard @containsRequiredFields={{true}}>
+    <EditCard>
       <:title>Veranderingsgebeurtenis</:title>
       <:card as |Card|>
         <Card.Columns>
@@ -251,7 +251,7 @@
                 </:content>
               </Item>
             {{/if}}
-            <Item @labelFor="request-reason" @alignTop={{true}}>
+            <Item @labelFor="request-reason">
               <:label>Toelichting bij de aanvraag</:label>
               <:content>
                 <AuTextarea
