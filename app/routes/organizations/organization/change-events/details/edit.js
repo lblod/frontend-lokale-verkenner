@@ -42,8 +42,15 @@ export default class OrganizationsOrganizationChangeEventsDetailsEditRoute exten
         decisionActivity = this.store.createRecord('decision-activity');
       }
 
-      if (decision.documentLinks.length === 0) {
-        // We assign a new array instead of pushing in an empty link, so that WarpDrive notices the change and it can be rolled back with `rollbackAttributes()`
+      if (
+        !decision.documentLinks?.some((link) => link) &&
+        !decision.description?.trim() &&
+        !decision.geenLinkBeschikbaar?.trim()
+      ) {
+        // A decision without any of the three opens as the design's empty
+        // state: one empty link row to start from. We assign a new array
+        // instead of pushing in an empty link, so that WarpDrive notices the
+        // change and it can be rolled back with `rollbackAttributes()`
         decision.documentLinks = [''];
       }
 

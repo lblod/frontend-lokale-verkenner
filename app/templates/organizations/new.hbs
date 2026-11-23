@@ -363,10 +363,10 @@
               </:content>
             </Item>
             <Item
-              @labelFor="change-event-decision-link-0"
+              @labelFor="decision-links-yes-links"
               @errorMessage={{@model.decision.error.documentLinks.message}}
             >
-              <:label>Link naar het besluit</:label>
+              <:label>Is er een link naar een besluit beschikbaar?</:label>
               <:content>
                 <ChangeEvents::DecisionDocumentLinks
                   @decision={{@model.decision}}
@@ -374,9 +374,12 @@
                 />
               </:content>
               <:helpText>
-                Een link naar het besluit waarmee de organisatie werd opgericht,
-                bijvoorbeeld op de website van het bestuur.
+                Meer informatie nodig over besluiten beschikbaar in onze
+                handleiding.
               </:helpText>
+              <:error>
+                {{! The errors are shown under each link or text }}
+              </:error>
             </Item>
             <Item
               @labelFor="decision-publication-date"

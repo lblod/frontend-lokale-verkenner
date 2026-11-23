@@ -63,27 +63,45 @@ import { isNameChangeType } from 'frontend-organization-portal/models/change-eve
                   </Item>
                 {{/if}}
               {{/if}}
-              {{#let
-                @model.changeEvent.decision.documentLinks
-                as |documentLinks|
-              }}
-                {{#if documentLinks.length}}
+              {{#if @model.changeEvent.decision}}
+                {{#let
+                  @model.changeEvent.decision.documentLinks
+                  as |documentLinks|
+                }}
+                  {{#if documentLinks.length}}
+                    <Item>
+                      <:label>Links naar besluiten</:label>
+                      <:content>
+                        <AuList as |Item|>
+                          {{#each documentLinks as |documentLink|}}
+                            <Item>
+                              <AuLinkExternal href={{documentLink}}>
+                                {{documentLink}}
+                              </AuLinkExternal>
+                            </Item>
+                          {{/each}}
+                        </AuList>
+                      </:content>
+                    </Item>
+                  {{/if}}
+                {{/let}}
+                {{#if @model.changeEvent.decision.description}}
                   <Item>
-                    <:label>Links naar besluiten</:label>
+                    <:label>Beschrijving van het besluit</:label>
                     <:content>
-                      <AuList as |Item|>
-                        {{#each documentLinks as |documentLink|}}
-                          <Item>
-                            <AuLinkExternal href={{documentLink}}>
-                              {{documentLink}}
-                            </AuLinkExternal>
-                          </Item>
-                        {{/each}}
-                      </AuList>
+                      {{@model.changeEvent.decision.description}}
                     </:content>
                   </Item>
                 {{/if}}
-              {{/let}}
+                {{#if @model.changeEvent.decision.geenLinkBeschikbaar}}
+                  <Item>
+                    <:label>Geen link beschikbaar</:label>
+                    <:content>
+                      {{@model.changeEvent.decision.geenLinkBeschikbaar}}
+                    </:content>
+                  </Item>
+                {{/if}}
+              {{/if}}
               {{#if @model.changeEvent.isWerkingsgebiedChangeEvent}}
                 {{! Old change events didn't persist this value }}
                 {{#if @model.originalScopeLabel}}

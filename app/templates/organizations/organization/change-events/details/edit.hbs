@@ -95,16 +95,20 @@
             {{/if}}
             {{#if @model.changeEvent.requiresDecisionInformation}}
               <Item
+                @labelFor="decision-links-yes-links"
                 @errorMessage={{@model.decision.error.documentLinks}}
-                @labelFor="change-event-decision-link-0"
               >
-                <:label>Links naar besluiten</:label>
+                <:label>Is er een link naar een besluit beschikbaar?</:label>
                 <:content>
                   <ChangeEvents::DecisionDocumentLinks
                     @decision={{@model.decision}}
                     @errors={{@model.decision.error.documentLinks}}
                   />
                 </:content>
+                <:helpText>
+                  Meer informatie nodig over besluiten beschikbaar in onze
+                  handleiding.
+                </:helpText>
                 <:error>
                   {{!
                     If we do not add the error block, the default implementation is used.

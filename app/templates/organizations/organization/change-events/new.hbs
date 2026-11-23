@@ -200,21 +200,21 @@
             {{#if @model.changeEvent.requiresDecisionInformation}}
               <Item
                 @errorMessage={{@model.decision.error.documentLinks}}
-                @labelFor="change-event-decision-link-0"
+                @labelFor="decision-links-yes-links"
               >
-                <:label>Links naar besluiten</:label>
+                <:label>Is er een link naar een besluit beschikbaar?</:label>
+                <:helpText>
+                  Meer informatie nodig over besluiten beschikbaar in onze
+                  handleiding.
+                </:helpText>
                 <:content>
                   <ChangeEvents::DecisionDocumentLinks
                     @decision={{@model.decision}}
                     @errors={{@model.decision.error.documentLinks}}
                   />
                 </:content>
-                <:helpText>
-                  Een link naar het besluit over deze veranderingsgebeurtenis,
-                  bijvoorbeeld op de website van het bestuur.
-                </:helpText>
                 <:error>
-                  {{! The errors are shown under each link }}
+                  {{! The errors are shown under each link or text }}
                 </:error>
               </Item>
             {{/if}}
