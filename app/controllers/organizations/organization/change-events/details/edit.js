@@ -1,14 +1,38 @@
 import Controller from '@ember/controller';
 import { service } from '@ember/service';
-import { saveRecord } from '@warp-drive/legacy/compat/builders';
 import { dropTask } from 'ember-concurrency';
+import { tracked } from '@glimmer/tracking';
 import { isNameChangeType } from 'frontend-organization-portal/models/change-event-type';
+import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
+import {
+  CHANGE_EVENT_LABELS,
+  CHANGE_EVENT_RESULT_LABELS,
+  DECISION_ACTIVITY_LABELS,
+  DECISION_LABELS,
+  ORGANIZATION_CORE_DATA_LABELS,
+  heldRequestNotice,
+  reportHeldRequest,
+} from 'frontend-organization-portal/utils/change-request-conflicts';
+import isMostRecentChangeEvent from 'frontend-organization-portal/utils/is-most-recent-change-event';
+import { isLoaded } from 'frontend-organization-portal/utils/records';
 
 export default class OrganizationsOrganizationChangeEventsDetailsEditController extends Controller {
   @service router;
   @service store;
+  @service changeRequests;
+  @service toaster;
 
   isNameChangeType = isNameChangeType;
+
+  @tracked saveError;
+  // Blocked after an unknown outcome, a failed apply, or a failed reload.
+  @tracked saveBlocked = false;
+  // The held request and its conflicting fields, for the notice.
+  @tracked heldRequest = null;
+  // The kept request to link to after a failed apply.
+  @tracked failedRequestId = null;
+  // Changes after a held save so the form rebuilds from the reloaded records.
+  @tracked formRevision = 0;
 
   get hasValidationErrors() {
     return this.model.changeEvent.error || this.model.decision?.error;
@@ -16,9 +40,19 @@ export default class OrganizationsOrganizationChangeEventsDetailsEditController 
 
   save = dropTask(async (event) => {
     event.preventDefault();
+    if (this.saveBlocked) {
+      return;
+    }
+    this.saveError = null;
+    this.heldRequest = null;
 
-    let { changeEvent, currentChangeEventResult, decision, decisionActivity } =
-      this.model;
+    let {
+      organization,
+      changeEvent,
+      currentChangeEventResult,
+      decision,
+      decisionActivity,
+    } = this.model;
 
     if (changeEvent.requiresDecisionInformation) {
       decision.documentLinks = decision.documentLinks.filter((link) =>
@@ -57,61 +91,163 @@ export default class OrganizationsOrganizationChangeEventsDetailsEditController 
       }
     }
 
-    if (
-      !changeEvent.error &&
-      (changeEvent.requiresDecisionInformation ? !decision.error : true)
-    ) {
-      if (changeEvent.requiresDecisionInformation) {
-        if (
-          decisionActivity.changedAttributes().endDate ||
-          (!decision.isEmpty && decision.hasDirtyAttributes)
-        ) {
-          if (decisionActivity.changedAttributes().endDate) {
-            if (decisionActivity.isNew) {
-              decision.hasDecisionActivity = decisionActivity;
-            }
-            await this.store.request(saveRecord(decisionActivity));
-          }
-          if (decision.isNew) {
-            changeEvent.decision = decision;
-          }
-
-          await this.store.request(saveRecord(decision));
-        }
-
-        if (decision.isEmpty) {
-          changeEvent.decision = null;
-          decision.deleteRecord();
-          if (!decision.isNew) {
-            await this.store.request(saveRecord(decision));
-          }
-          decision.unloadRecord();
-          // Prevents errors in call to `reset()` on transition
-          this.model.decision = null;
-        }
-      }
-
-      if (currentChangeEventResult.hasDirtyAttributes) {
-        await this.store.request(saveRecord(currentChangeEventResult));
-      }
-
-      // Note: always save change event as adding a decision is not detected by
-      // the `hasDirtyAttributes` method, which results in the new decision to
-      // be discarded on save.
-      await this.store.request(saveRecord(changeEvent));
-
-      this.router.transitionTo(
-        'organizations.organization.change-events.details',
-        changeEvent.id,
-      );
+    if (this.hasValidationErrors) {
+      return;
     }
+
+    // The records in creation order: besluit, activity, event, result,
+    // organisation.
+    const records = [];
+
+    const withDecision =
+      changeEvent.requiresDecisionInformation && !decision.isEmpty;
+    if (changeEvent.requiresDecisionInformation) {
+      // Clearing the link removes the besluit; a persisted besluit is deleted.
+      changeEvent.decision = withDecision ? decision : null;
+      if (withDecision) {
+        records.push(decision);
+      } else if (!decision.isNew) {
+        decision.deleteRecord();
+        records.push(decision);
+      }
+    }
+
+    // A new activity links the besluit from its own side.
+    if (withDecision && decisionActivity.changedAttributes().endDate) {
+      if (decisionActivity.isNew) {
+        decisionActivity.givesCauseTo = [decision];
+      }
+      records.push(decisionActivity);
+    }
+
+    records.push(changeEvent);
+
+    // Only the resulting name is editable on the result.
+    if (currentChangeEventResult.changedAttributes().resultingName) {
+      records.push(currentChangeEventResult);
+    }
+
+    // The corrected name follows to the organisation unless a later event exists.
+    if (
+      isNameChangeType(changeEvent.type) &&
+      currentChangeEventResult.resultingName &&
+      (await isMostRecentChangeEvent(this.store, changeEvent, organization))
+    ) {
+      organization.setAbbName(currentChangeEventResult.resultingName);
+    }
+    if (organization.hasDirtyAttributes) {
+      records.push(organization);
+    }
+
+    try {
+      // No changes: leave without a request.
+      if (!this.changeRequests.hasChanges(records)) {
+        this.router.transitionTo(
+          'organizations.organization.change-events.details',
+          changeEvent.id,
+        );
+        return;
+      }
+      await this.changeRequests.submit(
+        'change-event-edit',
+        organization.id,
+        records,
+      );
+    } catch (error) {
+      if (!(error instanceof ChangeRequestError)) {
+        throw error;
+      }
+      if (error.applied) {
+        // Applied, but the page could not reload: let the details page show it.
+        this.toaster.warning(error.message, 'Wijziging doorgevoerd');
+        this.router.refresh();
+        this.router.transitionTo(
+          'organizations.organization.change-events.details',
+          changeEvent.id,
+        );
+        return;
+      }
+      if (error.held) {
+        // Nothing applied; the records are back at the backend's state.
+        await this.showHeldRequest(
+          heldRequestNotice(error, this.fieldLabels()),
+        );
+        return;
+      }
+      // Keep the edits for a retry, unless the outcome is unknown or the
+      // apply failed.
+      this.saveError = error.message;
+      this.saveBlocked = error.outcomeUnknown || error.applyFailed;
+      this.failedRequestId = error.applyFailed ? error.requestId : null;
+      return;
+    }
+
+    this.router.transitionTo(
+      'organizations.organization.change-events.details',
+      changeEvent.id,
+    );
   });
 
+  // Reload the route, then show the notice; the refresh resets this controller.
+  async showHeldRequest(heldRequest) {
+    try {
+      await this.router.refresh(
+        'organizations.organization.change-events.details',
+      );
+    } catch (error) {
+      reportHeldRequest(this.toaster, error, heldRequest.waiting);
+      return;
+    }
+    this.formRevision += 1;
+    this.heldRequest = heldRequest;
+    this.saveBlocked = heldRequest.reloadFailed;
+  }
+
+  // The records and the labels their fields have in the notice.
+  fieldLabels() {
+    const {
+      organization,
+      changeEvent,
+      currentChangeEventResult,
+      decision,
+      decisionActivity,
+    } = this.model;
+    return [
+      [changeEvent, CHANGE_EVENT_LABELS],
+      [currentChangeEventResult, CHANGE_EVENT_RESULT_LABELS],
+      [decision, DECISION_LABELS],
+      [decisionActivity, DECISION_ACTIVITY_LABELS],
+      [organization, ORGANIZATION_CORE_DATA_LABELS],
+    ];
+  }
+
   reset() {
-    this.model.organization.reset();
-    this.model.changeEvent.reset();
-    this.model.decision?.reset();
-    this.model.decisionActivity?.rollbackAttributes();
-    this.model.currentChangeEventResult.rollbackAttributes();
+    const {
+      organization,
+      changeEvent,
+      decision,
+      decisionActivity,
+      currentChangeEventResult,
+    } = this.model;
+
+    // Relationships are not covered by rollbackAttributes.
+    if (isLoaded(decisionActivity)) {
+      this.changeRequests.rollbackRelationships(decisionActivity);
+      decisionActivity.rollbackAttributes();
+    }
+
+    for (const record of [organization, changeEvent, decision]) {
+      if (isLoaded(record)) {
+        record.reset();
+      }
+    }
+    if (isLoaded(currentChangeEventResult)) {
+      currentChangeEventResult.rollbackAttributes();
+    }
+
+    this.saveError = null;
+    this.saveBlocked = false;
+    this.heldRequest = null;
+    this.failedRequestId = null;
   }
 }

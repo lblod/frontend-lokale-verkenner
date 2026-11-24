@@ -1,28 +1,38 @@
 /* eslint-disable warp-drive/no-legacy-request-patterns -- TODO: remove this once we have an alternative for peekRecord and peekAll */
 import { module, test } from 'qunit';
 import { settled } from '@ember/test-helpers';
-import { recordIdentifierFor } from '@warp-drive/core';
 import { saveRecord } from '@warp-drive/legacy/compat/builders';
 import sinon from 'sinon';
 import { setupTest } from 'frontend-organization-portal/tests/helpers';
 import EditController from 'frontend-organization-portal/controllers/organizations/organization/related-organizations/edit';
+import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
 import { isEmptyPeriod } from 'frontend-organization-portal/utils/period-of-time';
 import { CLASSIFICATION } from 'frontend-organization-portal/models/administrative-unit-classification-code';
 import { MEMBERSHIP_ROLES_MAPPING } from 'frontend-organization-portal/models/membership-role';
+import OrganizationModel from 'frontend-organization-portal/models/organization';
+
+// A change request the service kept.
+const REQUEST_ID = 'e78ecf96-3a00-406f-a356-30cf560d7dba';
 
 module(
   'Unit | Controller | organizations/organization/related-organizations/edit',
   function (hooks) {
     setupTest(hooks);
 
-    // The organizations routes are built into a lazy bundle (`splitAtRoutes`
-    // in ember-cli-build.js), so the controller must be registered before the
-    // owner can look it up.
+    // The organizations routes are a lazy bundle, so register the controller first.
     hooks.beforeEach(function () {
       this.owner.register(
         'controller:organizations/organization/related-organizations/edit',
         EditController,
       );
+      const router = this.owner.lookup('service:router');
+      this.submit = sinon.stub(
+        this.owner.lookup('service:change-requests'),
+        'submit',
+      );
+      this.refresh = sinon.stub(router, 'refresh');
+      this.transitionTo = sinon.stub(router, 'transitionTo');
+      sinon.stub(this.owner.lookup('service:toaster'), 'warning');
     });
 
     hooks.afterEach(function () {
@@ -46,17 +56,38 @@ module(
      * to the membership.
      */
     function pushOrganizationWithMembership(store, { period } = {}) {
-      const [organization, , , membership] = store.push({
+      store.push({
         data: [
           {
             type: 'organization',
             id: 'organization',
             attributes: { name: 'Organisatie' },
+            relationships: {
+              classification: {
+                data: {
+                  type: 'administrative-unit-classification-code',
+                  id: CLASSIFICATION.MUNICIPALITY.id,
+                },
+              },
+            },
           },
           {
             type: 'organization',
             id: 'member',
             attributes: { name: 'Lid' },
+            relationships: {
+              classification: {
+                data: {
+                  type: 'administrative-unit-classification-code',
+                  id: CLASSIFICATION.MUNICIPALITY.id,
+                },
+              },
+            },
+          },
+          {
+            type: 'administrative-unit-classification-code',
+            id: CLASSIFICATION.MUNICIPALITY.id,
+            attributes: { label: CLASSIFICATION.MUNICIPALITY.label },
           },
           {
             type: 'membership-role',
@@ -82,46 +113,13 @@ module(
             : []),
         ],
       });
-      return { organization, membership };
+      return {
+        organization: store.peekRecord('organization', 'organization'),
+        membership: store.peekRecord('membership', 'membership'),
+      };
     }
 
     const event = { preventDefault() {} };
-
-    /**
-     * Stub the adapter so that no requests are sent, and return the log of
-     * the requests that would have been sent, in order.
-     */
-    function stubAdapter(owner) {
-      const adapter = owner.lookup('adapter:application');
-      const requests = [];
-      let nextId = 0;
-
-      sinon
-        .stub(adapter, 'createRecord')
-        .callsFake(async (store, modelClass, snapshot) => {
-          requests.push(`create ${snapshot.modelName}`);
-          return {
-            data: {
-              type: snapshot.modelName,
-              id: `new-${snapshot.modelName}-${++nextId}`,
-            },
-          };
-        });
-      sinon
-        .stub(adapter, 'updateRecord')
-        .callsFake(async (store, modelClass, snapshot) => {
-          requests.push(`update ${snapshot.modelName}`);
-          return null;
-        });
-      sinon
-        .stub(adapter, 'deleteRecord')
-        .callsFake(async (store, modelClass, snapshot) => {
-          requests.push(`delete ${snapshot.modelName}`);
-          return null;
-        });
-
-      return requests;
-    }
 
     module('reset', function () {
       test('it restores a persisted membership that was removed but not saved', function (assert) {
@@ -395,9 +393,7 @@ module(
           { period: { endDate: new Date('2025-01-01') } },
         );
         const period = membership.belongsTo('during').value();
-        const requests = stubAdapter(this.owner);
         const controller = this.controller();
-        sinon.stub(controller.router, 'transitionTo');
         controller.model = { organization, memberships: [membership] };
         controller.setup();
 
@@ -405,7 +401,7 @@ module(
         controller.setStartDate(membership, new Date('2026-01-01'));
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, []);
+        assert.true(this.submit.notCalled);
         assert.true(controller.hasValidationErrors);
         assert.notStrictEqual(period.error, undefined);
         assert.true(period.hasDirtyAttributes);
@@ -429,9 +425,7 @@ module(
           { period: { startDate: null, endDate: new Date('2025-01-01') } },
         );
         const period = membership.belongsTo('during').value();
-        stubAdapter(this.owner);
         const controller = this.controller();
-        sinon.stub(controller.router, 'transitionTo');
         controller.model = { organization, memberships: [membership] };
         controller.setup();
 
@@ -530,98 +524,101 @@ module(
       });
     });
 
-    module('save', function () {
-      test('it saves a new period before linking it to a persisted membership', async function (assert) {
+    module('save', function (hooks) {
+      // The organisation's own validation is covered by the kerngegevens tests.
+      hooks.beforeEach(function () {
+        sinon.stub(OrganizationModel.prototype, 'validate').resolves();
+      });
+
+      // A new membership with the persisted member and role, as the form creates it.
+      function addMembershipBetween(controller, store, organization) {
+        controller.addMembership();
+        const membership = controller.memberships.at(-1);
+        membership.role = store.peekRecord('membership-role', 'role');
+        membership.member = organization;
+        membership.organization = store.peekRecord('organization', 'member');
+        return membership;
+      }
+
+      test('it submits a new period before the membership that links it', async function (assert) {
         const store = this.store();
         const { organization, membership } =
           pushOrganizationWithMembership(store);
-        const requests = stubAdapter(this.owner);
         const controller = this.controller();
-        const transitionTo = sinon.stub(controller.router, 'transitionTo');
         controller.model = { organization, memberships: [membership] };
         controller.setup();
+        this.submit.resolves(new Map());
 
         controller.setStartDate(membership, new Date('2024-01-01'));
         const period = membership.belongsTo('during').value();
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, [
-          'create period-of-time',
-          'update membership',
-          'update organization',
-        ]);
-        assert.false(period.isNew);
-        assert.false(period.hasDirtyAttributes);
-        assert.strictEqual(membership.belongsTo('during').id(), period.id);
-        assert.false(controller.hasValidationErrors);
+        assert.true(this.submit.calledOnce);
+        const [aggregate, target, records] = this.submit.firstCall.args;
+        assert.strictEqual(aggregate, 'related-organizations');
+        assert.strictEqual(target, organization.id);
+        assert.deepEqual(
+          records.map((record) => record.constructor.modelName),
+          ['period-of-time', 'membership'],
+          'the period before the membership that links it; the organisation is not part of the aggregate',
+        );
+        assert.strictEqual(records[0], period);
+        assert.strictEqual(records[1], membership);
         assert.true(
-          transitionTo.calledOnceWithExactly(
+          this.transitionTo.calledOnceWithExactly(
             'organizations.organization.related-organizations',
             organization.id,
           ),
         );
       });
 
-      test('it only saves the period when the dates of a persisted period change', async function (assert) {
+      test('it only submits the period when the dates of a persisted period change', async function (assert) {
         const store = this.store();
         const { organization, membership } = pushOrganizationWithMembership(
           store,
           { period: { endDate: new Date('2025-01-01') } },
         );
         const period = membership.belongsTo('during').value();
-        const requests = stubAdapter(this.owner);
         const controller = this.controller();
-        sinon.stub(controller.router, 'transitionTo');
         controller.model = { organization, memberships: [membership] };
         controller.setup();
+        this.submit.resolves(new Map());
 
         controller.setEndDate(membership, new Date('2026-01-01'));
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, [
-          'update period-of-time',
-          'update organization',
-        ]);
-        assert.false(period.hasDirtyAttributes);
-        assert.deepEqual(membership.during?.endDate, new Date('2026-01-01'));
+        assert.deepEqual(this.submit.firstCall.args[2], [period]);
       });
 
-      test('it deletes a removed membership before its period', async function (assert) {
+      test('it submits a removed membership before its period', async function (assert) {
         const store = this.store();
         const { organization, membership } = pushOrganizationWithMembership(
           store,
           { period: { endDate: new Date('2025-01-01') } },
         );
-        const requests = stubAdapter(this.owner);
+        const period = membership.belongsTo('during').value();
         const controller = this.controller();
-        sinon.stub(controller.router, 'transitionTo');
         controller.model = { organization, memberships: [membership] };
         controller.setup();
+        this.submit.resolves(new Map());
 
         controller.reallyRemoveMembership(membership);
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, [
-          'delete membership',
-          'delete period-of-time',
-          'update organization',
-        ]);
-        assert.strictEqual(store.peekAll('membership').length, 0);
-        assert.strictEqual(store.peekAll('period-of-time').length, 0);
+        assert.deepEqual(this.submit.firstCall.args[2], [membership, period]);
       });
 
-      test('it does not persist a period without dates', async function (assert) {
+      test('it does not submit a period without dates', async function (assert) {
         const store = this.store();
         const { organization, membership } =
           pushOrganizationWithMembership(store);
-        const requests = stubAdapter(this.owner);
         const controller = this.controller();
-        sinon.stub(controller.router, 'transitionTo');
         controller.model = { organization, memberships: [membership] };
         controller.setup();
+        this.submit.resolves(new Map());
 
         controller.setStartDate(membership, new Date('2024-01-01'));
         controller.setStartDate(membership, null);
@@ -631,48 +628,43 @@ module(
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, ['update organization']);
         assert.strictEqual(membership.belongsTo('during').value(), null);
         assert.strictEqual(store.peekAll('period-of-time').length, 0);
+        assert.true(
+          this.submit.notCalled,
+          'nothing changed, so no request is sent',
+        );
       });
 
-      test('it saves the period of a new membership before the membership', async function (assert) {
+      test('it submits the period of a new membership before the membership', async function (assert) {
         const store = this.store();
-        const { organization, membership } =
-          pushOrganizationWithMembership(store);
-        const requests = stubAdapter(this.owner);
+        const { organization } = pushOrganizationWithMembership(store);
         const controller = this.controller();
-        sinon.stub(controller.router, 'transitionTo');
-        controller.model = { organization, memberships: [membership] };
+        controller.model = { organization, memberships: [] };
         controller.setup();
+        this.submit.resolves(new Map());
 
-        controller.addMembership();
-        const newMembership = controller.memberships.at(-1);
-        newMembership.role = store.peekRecord('membership-role', 'role');
-        newMembership.member = organization;
-        newMembership.organization = store.peekRecord('organization', 'member');
+        const newMembership = addMembershipBetween(
+          controller,
+          store,
+          organization,
+        );
         controller.setStartDate(newMembership, new Date('2024-01-01'));
         const period = newMembership.belongsTo('during').value();
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, [
-          'create period-of-time',
-          'create membership',
-          'update organization',
+        assert.deepEqual(this.submit.firstCall.args[2], [
+          period,
+          newMembership,
         ]);
-        assert.false(period.isNew);
-        assert.false(newMembership.isNew);
-        assert.strictEqual(newMembership.belongsTo('during').id(), period.id);
       });
 
       test('it does not save when the start date is after the end date', async function (assert) {
         const store = this.store();
         const { organization, membership } =
           pushOrganizationWithMembership(store);
-        const requests = stubAdapter(this.owner);
         const controller = this.controller();
-        const transitionTo = sinon.stub(controller.router, 'transitionTo');
         controller.model = { organization, memberships: [membership] };
         controller.setup();
 
@@ -682,7 +674,7 @@ module(
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, []);
+        assert.true(this.submit.notCalled);
         assert.true(controller.hasValidationErrors);
         assert.propContains(period.error, {
           startDate: {
@@ -692,17 +684,14 @@ module(
             message: 'Kies een einddatum die na de startdatum plaatsvindt',
           },
         });
-        assert.true(transitionTo.notCalled);
+        assert.true(this.transitionTo.notCalled);
       });
 
       test('it keeps a new membership that only has dates so that it fails validation', async function (assert) {
         const store = this.store();
-        const { organization, membership } =
-          pushOrganizationWithMembership(store);
-        const requests = stubAdapter(this.owner);
+        const { organization } = pushOrganizationWithMembership(store);
         const controller = this.controller();
-        sinon.stub(controller.router, 'transitionTo');
-        controller.model = { organization, memberships: [membership] };
+        controller.model = { organization, memberships: [] };
         controller.setup();
 
         controller.addMembership();
@@ -711,9 +700,9 @@ module(
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, []);
+        assert.true(this.submit.notCalled);
         assert.true(controller.hasValidationErrors);
-        assert.deepEqual(controller.memberships, [membership, newMembership]);
+        assert.deepEqual(controller.memberships, [newMembership]);
         assert.propContains(newMembership.error, {
           role: { message: 'Selecteer een optie' },
         });
@@ -725,11 +714,10 @@ module(
           store,
           { period: { endDate: new Date('2025-01-01') } },
         );
-        const requests = stubAdapter(this.owner);
         const controller = this.controller();
-        const transitionTo = sinon.stub(controller.router, 'transitionTo');
         controller.model = { organization, memberships: [membership] };
         controller.setup();
+        this.submit.resolves(new Map());
 
         // A start date after the end date, entered before removing the row
         controller.setStartDate(membership, new Date('2026-01-01'));
@@ -737,24 +725,19 @@ module(
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, [
-          'delete membership',
-          'delete period-of-time',
-          'update organization',
-        ]);
+        assert.true(this.submit.calledOnce);
         assert.false(controller.hasValidationErrors);
-        assert.true(transitionTo.calledOnce);
+        assert.true(this.transitionTo.calledOnce);
       });
 
       test('it discards the unsaved period of a removed membership', async function (assert) {
         const store = this.store();
         const { organization, membership } =
           pushOrganizationWithMembership(store);
-        const requests = stubAdapter(this.owner);
         const controller = this.controller();
-        const transitionTo = sinon.stub(controller.router, 'transitionTo');
         controller.model = { organization, memberships: [membership] };
         controller.setup();
+        this.submit.resolves(new Map());
 
         // Invalid dates, entered before removing the row
         controller.setStartDate(membership, new Date('2025-01-01'));
@@ -763,100 +746,140 @@ module(
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, [
-          'delete membership',
-          'update organization',
-        ]);
+        assert.deepEqual(this.submit.firstCall.args[2], [membership]);
         assert.false(controller.hasValidationErrors);
         assert.strictEqual(store.peekAll('period-of-time').length, 0);
-        assert.true(transitionTo.calledOnce);
+        assert.true(this.transitionTo.calledOnce);
       });
 
-      test('it ignores the errors of a membership that is removed after a failed save', async function (assert) {
+      test('it does not send a request when nothing changed', async function (assert) {
+        const store = this.store();
+        const { organization, membership } =
+          pushOrganizationWithMembership(store);
+        const controller = this.controller();
+        controller.model = { organization, memberships: [membership] };
+        controller.setup();
+
+        await controller.save.perform(event);
+
+        assert.true(this.submit.notCalled);
+        assert.true(
+          this.transitionTo.calledOnceWithExactly(
+            'organizations.organization.related-organizations',
+            organization.id,
+          ),
+        );
+      });
+
+      test('it reloads the page and shows the notice when the service holds the request', async function (assert) {
         const store = this.store();
         const { organization, membership } = pushOrganizationWithMembership(
           store,
           { period: { endDate: new Date('2025-01-01') } },
         );
-        const period = membership.belongsTo('during').value();
-        const requests = stubAdapter(this.owner);
         const controller = this.controller();
-        const transitionTo = sinon.stub(controller.router, 'transitionTo');
+        const revision = controller.formRevision;
+        this.submit.rejects(
+          new ChangeRequestError('De wijziging werd niet doorgevoerd.', {
+            status: 409,
+            held: true,
+            waiting: false,
+            requestId: null,
+            conflicts: [
+              {
+                resource: { type: 'periods-of-time', id: 'period' },
+                key: 'end-date',
+                base: '2025-01-01',
+                current: '2025-06-01',
+                proposed: '2026-01-01',
+                'competing-requests': [],
+              },
+            ],
+          }),
+        );
+        // Refreshing resets the controller, as the edit route's resetController does.
+        this.refresh.callsFake(async () => {
+          controller.reset();
+          assert.strictEqual(controller.formRevision, revision);
+        });
         controller.model = { organization, memberships: [membership] };
         controller.setup();
 
-        controller.setStartDate(membership, new Date('2026-01-01'));
-        await controller.save.perform(event);
-
-        assert.deepEqual(requests, []);
-        assert.true(controller.hasValidationErrors);
-
-        controller.reallyRemoveMembership(membership);
-
-        // The row is hidden, so its errors no longer count
-        assert.notStrictEqual(period.error, undefined);
-        assert.false(controller.hasValidationErrors);
+        controller.setEndDate(membership, new Date('2026-01-01'));
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, [
-          'delete membership',
-          'delete period-of-time',
-          'update organization',
-        ]);
-        assert.true(transitionTo.calledOnce);
+        assert.true(
+          this.refresh.calledOnceWithExactly(
+            'organizations.organization.related-organizations',
+          ),
+        );
+        assert.strictEqual(controller.formRevision, revision + 1);
+        assert.deepEqual(controller.heldRequest, {
+          id: null,
+          fields: ['Einddatum relatie'],
+          reloadFailed: false,
+          waiting: false,
+        });
+        assert.true(this.transitionTo.notCalled);
+        assert.strictEqual(controller.saveError, null);
+        assert.false(controller.saveBlocked);
       });
 
-      test('it saves the membership on a retry when linking its new period failed', async function (assert) {
+      test('it blocks saving and keeps the request to link to when its apply failed', async function (assert) {
         const store = this.store();
         const { organization, membership } =
           pushOrganizationWithMembership(store);
-        const requests = stubAdapter(this.owner);
-        this.owner
-          .lookup('adapter:application')
-          .updateRecord.onFirstCall()
-          .callsFake(async (_store, _modelClass, snapshot) => {
-            requests.push(`update ${snapshot.modelName}`);
-            throw new Error('PATCH failed');
-          });
         const controller = this.controller();
-        const transitionTo = sinon.stub(controller.router, 'transitionTo');
+        this.submit.rejects(
+          new ChangeRequestError('De wijziging kon niet doorgevoerd worden.', {
+            status: 409,
+            applyFailed: true,
+            requestId: REQUEST_ID,
+          }),
+        );
         controller.model = { organization, memberships: [membership] };
         controller.setup();
 
-        controller.setEndDate(membership, new Date('2025-01-01'));
-        const period = membership.belongsTo('during').value();
-
-        await assert.rejects(controller.save.perform(event), /PATCH failed/);
-
-        // The period is persisted, but the membership is not linked to it on
-        // the server
-        assert.deepEqual(requests, [
-          'create period-of-time',
-          'update membership',
-        ]);
-        assert.false(period.isNew);
-        assert.false(period.hasDirtyAttributes);
-        assert.strictEqual(membership.belongsTo('during').value(), period);
-        assert.strictEqual(
-          store.cache.getRemoteRelationship(
-            recordIdentifierFor(membership),
-            'during',
-          ).data,
-          null,
-        );
-        assert.true(transitionTo.notCalled);
+        controller.setStartDate(membership, new Date('2024-01-01'));
 
         await controller.save.perform(event);
 
-        assert.deepEqual(requests, [
-          'create period-of-time',
-          'update membership',
-          'update membership',
-          'update organization',
-        ]);
-        assert.strictEqual(membership.belongsTo('during').id(), period.id);
-        assert.true(transitionTo.calledOnce);
+        assert.true(controller.saveBlocked);
+        assert.strictEqual(controller.failedRequestId, REQUEST_ID);
+        assert.strictEqual(this.controller.saveError, undefined);
+
+        await controller.save.perform(event);
+
+        assert.true(this.submit.calledOnce, 'a second save sends nothing');
+      });
+
+      test('it shows the message of the service and keeps the edits when the request is refused', async function (assert) {
+        const store = this.store();
+        const { organization, membership } =
+          pushOrganizationWithMembership(store);
+        const controller = this.controller();
+        this.submit.rejects(
+          new ChangeRequestError('U mag deze organisatie niet bewerken.', {
+            status: 403,
+          }),
+        );
+        controller.model = { organization, memberships: [membership] };
+        controller.setup();
+
+        controller.setStartDate(membership, new Date('2024-01-01'));
+
+        await controller.save.perform(event);
+
+        assert.strictEqual(
+          controller.saveError,
+          'U mag deze organisatie niet bewerken.',
+        );
+        assert.strictEqual(controller.heldRequest, null);
+        assert.false(controller.saveBlocked);
+        assert.true(this.refresh.notCalled);
+        assert.true(this.transitionTo.notCalled);
+        assert.notStrictEqual(membership.belongsTo('during').value(), null);
       });
     });
 

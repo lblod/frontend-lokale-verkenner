@@ -144,8 +144,8 @@ pages that still contain such a write (see the table) are closed.
 | Kerngegevens (`core-data/edit`)                                | change request, aggregate `organization-core-data`; juridische vorm, werkingsgebied and bijkomende kwalificatie are shown only, they change through a veranderingsgebeurtenis |
 | Vestigingen (`sites/new`, `sites/site/edit`)                   | change request, aggregate `site`                                                                                                                                              |
 | Veranderingsgebeurtenissen (`change-events/new`)               | change request, aggregate `change-event` (see [The request pages](#the-request-pages))                                                                                        |
-| Veranderingsgebeurtenissen (`change-events/details/edit`)      | not switched yet: the edit route redirects to `unauthorized` and the page shows no edit action                                                                                |
-| Gerelateerde organisaties (`related-organizations/edit`)       | not switched yet: idem                                                                                                                                                        |
+| Veranderingsgebeurtenissen (`change-events/details/edit`)      | change request, aggregate `change-event-edit`                                                                                                                                 |
+| Gerelateerde organisaties (`related-organizations/edit`)       | change request, aggregate `related-organizations`                                                                                                                             |
 | Betrokken lokale besturen (`local-involvements/edit`, worship) | not switched yet: idem                                                                                                                                                        |
 | Bestuursorganen (`governing-bodies/governing-body/edit`)       | read-only, mastered by LMB: the edit route redirects and the page shows no edit action                                                                                        |
 | Nieuwe organisatie (`organizations/new`)                       | change request, aggregate `new-organisation` (see [The request pages](#the-request-pages))                                                                                    |
@@ -557,12 +557,14 @@ the step for API use.
 An aggregate is the set of records one page saves together; the service only
 accepts the types that belong to it.
 
-| Aggregate                | Page                                          | Records, in the order they are sent                                                                                                                                                                                                                                |
-| ------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `organization-core-data` | Kerngegevens (`core-data/edit`)               | the address and the contact points when changed, the primary site when new or when a contact point was added, the KBO (when the type requires one) and SharePoint structured identifiers and identifiers, the organisation                                         |
-| `site`                   | Vestigingen (`sites/new`, `sites/site/edit`)  | the contact points and the address when changed (always for a new site), the site, the organisation: always on `sites/new`, where it links the new site through its `sites` or `primary-site` relationship, and on `sites/site/edit` when the primary site changes |
-| `new-organisation`       | Nieuwe organisatie (`organizations/new`)      | the KBO and SharePoint structured identifiers and identifiers, the contact points, the address and the primary site, the besluit when one was filled in, the oprichting (change event) and its result, the organisation                                            |
-| `change-event`           | Veranderingsgebeurtenis (`change-events/new`) | the besluit when the type asks for one and one was filled in, the change event, its result, the organisation with the fields the event changes                                                                                                                     |
+| Aggregate                | Page                                                     | Records, in the order they are sent                                                                                                                                                                                                                                     |
+| ------------------------ | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `organization-core-data` | Kerngegevens (`core-data/edit`)                          | the address and the contact points when changed, the primary site when new or when a contact point was added, the KBO (when the type requires one) and SharePoint structured identifiers and identifiers, the organisation                                              |
+| `site`                   | Vestigingen (`sites/new`, `sites/site/edit`)             | the contact points and the address when changed (always for a new site), the site, the organisation: always on `sites/new`, where it links the new site through its `sites` or `primary-site` relationship, and on `sites/site/edit` when the primary site changes      |
+| `new-organisation`       | Nieuwe organisatie (`organizations/new`)                 | the KBO and SharePoint structured identifiers and identifiers, the contact points, the address and the primary site, the besluit when one was filled in, the oprichting (change event) and its result, the organisation                                                 |
+| `change-event`           | Veranderingsgebeurtenis (`change-events/new`)            | the besluit when the type asks for one and one was filled in, the change event, its result, the organisation with the fields the event changes                                                                                                                          |
+| `related-organizations`  | Gerelateerde organisaties (`related-organizations/edit`) | the deleted memberships with their periods, the periods, the memberships that link them (the organisation is link-only in this aggregate)                                                                                                                               |
+| `change-event-edit`      | Veranderingsgebeurtenis (`change-events/details/edit`)   | the besluit when the type asks for one and one was filled in (deleted when the user cleared it), its beslissingsactiviteit when its end date changed, the change event, its result when the resulting name changed, the organisation when the corrected name follows it |
 
 The edit routes create a placeholder for a contact point the site lacks and
 for a missing SharePoint identifier. A new record is always dirty, so a
@@ -604,8 +606,10 @@ with the service:
   through `organization-core-data` its names, purpose, expected end date,
   themes, identifiers and sites; through `site` its sites; through
   `change-event` its names, status, legal form, werkingsgebied and
-  qualifications. Any other key the frontend sends unchanged; a changed one
-  is a `422` whose `source.pointer` names it.
+  qualifications; through `related-organizations` none (the aggregate carries
+  only memberships and their periods); through `change-event-edit` its names.
+  Any other key the frontend sends unchanged; a changed one is a `422` whose
+  `source.pointer` names it.
 - `meta.base` of an update carries, for every key the operation carries, the
   loaded value in the serialisation of the proposal (see
   [Base values](#base-values)), relationships included.

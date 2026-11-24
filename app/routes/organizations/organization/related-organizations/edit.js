@@ -6,6 +6,7 @@ import getFiltersForRoleLabel from 'frontend-organization-portal/utils/get-filte
 export default class OrganizationsOrganizationRelatedOrganizationsEditRoute extends Route {
   @service router;
   @service store;
+  @service changeRequests;
 
   queryParams = {
     page: { refreshModel: true },
@@ -13,10 +14,11 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditRoute exte
   };
 
   beforeModel() {
-    // Not switched to change requests: the saves of this page go straight to
-    // the resource routes, which the backend refuses. Nothing links to it
-    // until it is switched; it never opens.
-    this.router.transitionTo('unauthorized');
+    // The organisation of the transition, which may differ from the one on screen.
+    const { id } = this.paramsFor('organizations.organization');
+    if (!this.changeRequests.canEditOrganization(id)) {
+      this.router.transitionTo('unauthorized');
+    }
   }
 
   async model(params) {
