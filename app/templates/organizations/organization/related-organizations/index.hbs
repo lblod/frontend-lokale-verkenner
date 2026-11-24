@@ -16,8 +16,21 @@
             )
           )
         }}
-          {{! Read-only until this page is switched to change requests }}
-          <ReportWrongData />
+          <SecuredArea>
+            <:edit>
+              <AuLink
+                @route="organizations.organization.related-organizations.edit"
+                @skin="button-secondary"
+                @icon="pencil"
+                @iconAlignment="left"
+              >
+                Bewerk
+              </AuLink>
+            </:edit>
+            <:readOnly>
+              <ReportWrongData />
+            </:readOnly>
+          </SecuredArea>
         {{/if}}
       </:action>
     </PageHeader>

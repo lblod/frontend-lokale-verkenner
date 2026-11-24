@@ -1,11 +1,13 @@
 import AuLink from '@appuniversum/ember-appuniversum/components/au-link';
 import AuLinkExternal from '@appuniversum/ember-appuniversum/components/au-link-external';
 import AuList from '@appuniversum/ember-appuniversum/components/au-list';
+import { array } from '@ember/helper';
 import DataCard from 'frontend-organization-portal/components/data-card';
 import AdditionalQualificationsList from 'frontend-organization-portal/components/additional-qualifications-list';
 import OrganizationStatus from 'frontend-organization-portal/components/organization-status';
 import PageHeader from 'frontend-organization-portal/components/page-header';
 import ReportWrongData from 'frontend-organization-portal/components/report-wrong-data';
+import SecuredArea from 'frontend-organization-portal/components/secured-area';
 import isAdditionalQualificationChangeEvent from 'frontend-organization-portal/helpers/is-additional-qualification-change-event';
 import dateFormat from 'frontend-organization-portal/helpers/date-format';
 import { isNameChangeType } from 'frontend-organization-portal/models/change-event-type';
@@ -21,8 +23,22 @@ import { isNameChangeType } from 'frontend-organization-portal/models/change-eve
         <:subtitle>{{@model.organization.abbName}}
           ({{@model.organization.classification.label}})</:subtitle>
         <:action>
-          {{! Editing a recorded event is not a change request yet }}
-          <ReportWrongData />
+          <SecuredArea>
+            <:edit>
+              <AuLink
+                @route="organizations.organization.change-events.details.edit"
+                @models={{array @model.organization.id @model.changeEvent.id}}
+                @skin="button-secondary"
+                @icon="pencil"
+                @iconAlignment="left"
+              >
+                Bewerk
+              </AuLink>
+            </:edit>
+            <:readOnly>
+              <ReportWrongData />
+            </:readOnly>
+          </SecuredArea>
         </:action>
       </PageHeader>
 

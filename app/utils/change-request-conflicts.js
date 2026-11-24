@@ -84,6 +84,54 @@ export const PRIMARY_SITE_LABELS = {
 };
 
 /**
+ * The memberships on the related-organizations page.
+ */
+export const MEMBERSHIP_LABELS = {
+  member: 'Gerelateerde organisatie',
+  organization: 'Gerelateerde organisatie',
+  role: 'Relatie',
+  during: 'Periode',
+};
+
+/**
+ * The periods on the related-organizations page.
+ */
+export const PERIOD_LABELS = {
+  'start-date': 'Startdatum relatie',
+  'end-date': 'Einddatum relatie',
+};
+
+/**
+ * The change event on its details edit page.
+ */
+export const CHANGE_EVENT_LABELS = {
+  description: 'Beschrijving',
+  decision: 'Besluit',
+};
+
+/**
+ * The result of the change event on its details edit page.
+ */
+export const CHANGE_EVENT_RESULT_LABELS = {
+  'resulting-name': 'Nieuwe naam',
+};
+
+/**
+ * The decision of the change event on its details edit page.
+ */
+export const DECISION_LABELS = {
+  'publication-date': 'Datum besluit',
+  'document-links': 'Links naar besluiten',
+};
+
+/**
+ * The decision activity of the change event on its details edit page.
+ */
+export const DECISION_ACTIVITY_LABELS = {
+  'end-date': 'Datum ministerieel besluit',
+};
+
+/**
  * The fields of a held change request's conflicts as the page names them:
  * in the order of the conflicts, each once, by the label the page gives that
  * key of that record, or by the key itself when it has none.

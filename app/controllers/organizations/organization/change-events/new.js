@@ -3,10 +3,7 @@ import { action } from '@ember/object';
 import { service } from '@ember/service';
 import { dropTask } from 'ember-concurrency';
 import { tracked } from '@glimmer/tracking';
-import {
-  findRecord,
-  query as queryBuilder,
-} from '@warp-drive/legacy/compat/builders';
+import { findRecord } from '@warp-drive/legacy/compat/builders';
 import {
   CHANGE_EVENT_TYPE,
   MultipleOrganizationTypeIdList,
@@ -15,6 +12,7 @@ import {
 import { ORGANIZATION_STATUS } from 'frontend-organization-portal/models/organization-status-code';
 import isAdditionalQualificationChangeEvent from 'frontend-organization-portal/helpers/is-additional-qualification-change-event';
 import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
+import isMostRecentChangeEvent from 'frontend-organization-portal/utils/is-most-recent-change-event';
 import { isLoaded } from 'frontend-organization-portal/utils/records';
 
 /**
@@ -350,7 +348,7 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
 
     // The organisation follows the event, unless a later event was recorded
     // already (an event entered after the fact)
-    if (await this.isMostRecent(changeEvent, organization)) {
+    if (await isMostRecentChangeEvent(this.store, changeEvent, organization)) {
       organization.organizationStatus = resultingStatus;
       if (resultingLegalForm) {
         organization.legalForm = resultingLegalForm;
@@ -446,25 +444,6 @@ export default class OrganizationsOrganizationChangeEventsNewController extends 
       saved.get(changeEvent).id,
     );
   });
-
-  /**
-   * Whether no later change event of the organisation is recorded yet, so
-   * the event is the one the organisation's current fields follow.
-   */
-  async isMostRecent(changeEvent, organization) {
-    const { content: results } = await this.store.request(
-      queryBuilder('change-event-result', {
-        'filter[resulting-organization][:id:]': organization.id,
-        include: 'result-from',
-        page: { size: 1 },
-        sort: '-result-from.date',
-      }),
-    );
-    const mostRecent = results.length ? await results.at(0).resultFrom : null;
-    return (
-      !mostRecent || !mostRecent.date || mostRecent.date <= changeEvent.date
-    );
-  }
 
   /**
    * Undo what an attempt that was not applied did to the records of the

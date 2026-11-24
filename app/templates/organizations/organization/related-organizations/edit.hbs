@@ -16,7 +16,7 @@
             <AuButton
               @loading={{this.save.isRunning}}
               @loadingMessage="Opslaan"
-              @disabled={{this.save.isRunning}}
+              @disabled={{or this.save.isRunning this.saveBlocked}}
               form="edit-core-info-form"
               type="submit"
             >
@@ -25,35 +25,52 @@
           </AuButtonGroup>
           <ReportWrongData />
           <Error::Save @showSaveError={{this.hasValidationErrors}} />
+          <Error::ChangeRequest @message={{this.saveError}} />
+          {{#if this.failedRequestId}}
+            <AuLink
+              @route="aanvragen.aanvraag"
+              @model={{this.failedRequestId}}
+              data-test-failed-request
+            >Bekijk de aanvraag</AuLink>
+          {{/if}}
         </div>
       </:action>
     </PageHeader>
 
-    <form
-      id="edit-core-info-form"
-      aria-label="edit-core-info-form"
-      {{on "submit" (perform this.save)}}
+    <Error::ChangeRequestHeld
+      @held={{this.heldRequest}}
+      class="au-u-margin-bottom-large"
     >
-      <div class="au-o-flow au-o-flow--large">
-        <RelatedOrganizationsEditTable
-          @model={{@model}}
-          @content={{this.memberships}}
-          @organizationStatus={{this.organizationStatus}}
-          @page={{this.page}}
-          @size={{this.size}}
-          @addRelatedOrganization={{this.addMembership}}
-          @removeRelatedOrganization={{this.removeMembership}}
-          @updateMembershipRole={{this.updateMembershipRole}}
-          @displayRoleLabel={{this.displayRoleLabel}}
-          @selectedRole={{this.selectedRoleLabel}}
-          @unsavedEdit={{this.hasUnsavedEdits}}
-          @setOtherRelatedOrganization={{this.setRelatedOrganizationMembership}}
-          @setStartDate={{this.setStartDate}}
-          @setEndDate={{this.setEndDate}}
-          id="edit-related-organizations"
-        />
-      </div>
-    </form>
+      De tabel toont de relaties zoals ze nu opgeslagen zijn.
+    </Error::ChangeRequestHeld>
+
+    <Rebuild @key={{this.formRevision}}>
+      <form
+        id="edit-core-info-form"
+        aria-label="edit-core-info-form"
+        {{on "submit" (perform this.save)}}
+      >
+        <div class="au-o-flow au-o-flow--large">
+          <RelatedOrganizationsEditTable
+            @model={{@model}}
+            @content={{this.memberships}}
+            @organizationStatus={{this.organizationStatus}}
+            @page={{this.page}}
+            @size={{this.size}}
+            @addRelatedOrganization={{this.addMembership}}
+            @removeRelatedOrganization={{this.removeMembership}}
+            @updateMembershipRole={{this.updateMembershipRole}}
+            @displayRoleLabel={{this.displayRoleLabel}}
+            @selectedRole={{this.selectedRoleLabel}}
+            @unsavedEdit={{this.hasUnsavedEdits}}
+            @setOtherRelatedOrganization={{this.setRelatedOrganizationMembership}}
+            @setStartDate={{this.setStartDate}}
+            @setEndDate={{this.setEndDate}}
+            id="edit-related-organizations"
+          />
+        </div>
+      </form>
+    </Rebuild>
   </div>
 </div>
 

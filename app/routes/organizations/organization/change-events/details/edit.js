@@ -5,12 +5,14 @@ import { CHANGE_EVENT_TYPE } from 'frontend-organization-portal/models/change-ev
 export default class OrganizationsOrganizationChangeEventsDetailsEditRoute extends Route {
   @service router;
   @service store;
+  @service changeRequests;
 
   beforeModel() {
-    // Not switched to change requests: the saves of this page go straight to
-    // the resource routes, which the backend refuses. Nothing links to it
-    // until it is switched; it never opens.
-    this.router.transitionTo('unauthorized');
+    // The organisation of the transition, which may differ from the one on screen.
+    const { id } = this.paramsFor('organizations.organization');
+    if (!this.changeRequests.canEditOrganization(id)) {
+      this.router.transitionTo('unauthorized');
+    }
   }
 
   async model() {

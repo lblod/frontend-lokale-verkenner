@@ -4,10 +4,14 @@ import { service } from '@ember/service';
 import { action } from '@ember/object';
 import { tracked } from '@glimmer/tracking';
 import { recordIdentifierFor } from '@warp-drive/core';
+import { query as queryBuilder } from '@warp-drive/legacy/compat/builders';
+import { ChangeRequestError } from 'frontend-organization-portal/services/change-requests';
 import {
-  query as queryBuilder,
-  saveRecord,
-} from '@warp-drive/legacy/compat/builders';
+  MEMBERSHIP_LABELS,
+  PERIOD_LABELS,
+  heldRequestNotice,
+  reportHeldRequest,
+} from 'frontend-organization-portal/utils/change-request-conflicts';
 import {
   removingMembershipBreaksMinimum,
   shouldSwapAssignments,
@@ -17,6 +21,8 @@ import { isEmptyPeriod } from 'frontend-organization-portal/utils/period-of-time
 export default class OrganizationsOrganizationRelatedOrganizationsEditController extends Controller {
   @service router;
   @service store;
+  @service changeRequests;
+  @service toaster;
 
   queryParams = ['page', 'size', 'selectedRoleLabel'];
 
@@ -32,6 +38,16 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
 
   @tracked nonActiveMembership;
   @tracked nonActiveRelatedOrganization;
+
+  @tracked saveError;
+  // Blocked after an unknown outcome, a failed apply, or a failed reload.
+  @tracked saveBlocked = false;
+  // The held request and its conflicting fields, for the notice.
+  @tracked heldRequest = null;
+  // The kept request to link to after a failed apply.
+  @tracked failedRequestId = null;
+  // Changes after a held save so the table rebuilds from the reloaded rows.
+  @tracked formRevision = 0;
 
   get hasValidationErrors() {
     // Removed rows are hidden, so their errors can never be shown; they are
@@ -300,6 +316,11 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
 
   save = dropTask(async (event) => {
     event.preventDefault();
+    if (this.saveBlocked) {
+      return;
+    }
+    this.saveError = null;
+    this.heldRequest = null;
 
     this.memberships = this.memberships.filter((membership) => {
       if (membership.isNew && this.#isEmptyMembership(membership)) {
@@ -367,11 +388,59 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
         }),
       );
 
-      await Promise.all(
-        this.memberships.map((membership) => this.#saveMembership(membership)),
-      );
+      // An empty period the user added is not saved.
+      for (const membership of this.memberships) {
+        const period = membership.during;
+        if (!membership.isDeleted && period?.isNew && isEmptyPeriod(period)) {
+          membership.during = null;
+          period.rollbackAttributes();
+        }
+      }
 
-      await this.store.request(saveRecord(organization));
+      const records = this.#records();
+
+      try {
+        // No changes: leave without a request.
+        if (!this.changeRequests.hasChanges(records)) {
+          this.router.transitionTo(
+            'organizations.organization.related-organizations',
+            organization.id,
+          );
+          return;
+        }
+        await this.changeRequests.submit(
+          'related-organizations',
+          organization.id,
+          records,
+        );
+      } catch (error) {
+        if (!(error instanceof ChangeRequestError)) {
+          throw error;
+        }
+        if (error.applied) {
+          // Applied, but the page could not reload: let the overview show it.
+          this.toaster.warning(error.message, 'Wijziging doorgevoerd');
+          this.router.refresh();
+          this.router.transitionTo(
+            'organizations.organization.related-organizations',
+            organization.id,
+          );
+          return;
+        }
+        if (error.held) {
+          // Nothing applied; the records are back at the backend's state.
+          await this.showHeldRequest(
+            heldRequestNotice(error, this.fieldLabels()),
+          );
+          return;
+        }
+        // Keep the edits for a retry, unless the outcome is unknown or the
+        // apply failed.
+        this.saveError = error.message;
+        this.saveBlocked = error.outcomeUnknown || error.applyFailed;
+        this.failedRequestId = error.applyFailed ? error.requestId : null;
+        return;
+      }
 
       this.router.transitionTo(
         'organizations.organization.related-organizations',
@@ -380,59 +449,86 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
     }
   });
 
-  /**
-   * A removed membership is deleted before its period. Otherwise the period is
-   * saved first (the link needs a persisted period) and the membership only
-   * when it is new or its period is not linked yet.
-   */
-  async #saveMembership(membership) {
-    const period = membership.during;
+  // Dependencies first: periods before their memberships, a deleted
+  // membership before its period. The organisation is not part of the request.
+  #records() {
+    const deleted = [];
+    const periods = [];
+    const memberships = [];
 
-    if (membership.isDeleted) {
-      await this.store.request(saveRecord(membership));
-      if (period?.isNew) {
-        // Never saved, so there is nothing to delete
-        period.rollbackAttributes();
-      } else if (period) {
-        period.deleteRecord();
-        await this.store.request(saveRecord(period));
+    for (const membership of this.memberships) {
+      const period = membership.during;
+      if (membership.isDeleted) {
+        deleted.push(membership);
+        if (period && !period.isNew) {
+          deleted.push(period);
+        } else if (period?.isNew) {
+          // Never saved: nothing to delete, and the deleted row must not carry it.
+          membership.during = null;
+          period.rollbackAttributes();
+        }
+        continue;
       }
-      return;
+      if (period?.isNew || period?.hasDirtyAttributes) {
+        periods.push(period);
+      }
+      if (
+        membership.isNew ||
+        membership.hasDirtyAttributes ||
+        // A relinked period is not a dirty attribute, so check it separately.
+        this.#relinked(membership, period)
+      ) {
+        memberships.push(membership);
+      }
     }
 
-    let mustSaveMembership = membership.isNew;
-    let linkedPeriod = null;
+    const records = [...deleted, ...periods, ...memberships];
+    return records;
+  }
 
+  // Whether the membership links another period than the backend has.
+  #relinked(membership, period) {
+    // A new period has no id, so linking it always changes the membership.
     if (period?.isNew) {
-      if (isEmptyPeriod(period)) {
-        // The user did not enter any dates, do not persist an empty period
-        membership.during = null;
-        period.rollbackAttributes();
-      } else {
-        await this.store.request(saveRecord(period));
-        linkedPeriod = period;
-      }
-    } else if (period) {
-      if (period.hasDirtyAttributes) {
-        await this.store.request(saveRecord(period));
-      }
-      linkedPeriod = period;
+      return true;
     }
-
-    if (linkedPeriod && !mustSaveMembership) {
-      // Decide on the persisted link, not on `period.isNew`: after a save that
-      // failed on the membership request the period is already persisted
-      // while the membership is still unlinked on the server.
-      const remote = this.store.cache.getRemoteRelationship(
+    const stored =
+      this.store.cache.getRemoteRelationship(
         recordIdentifierFor(membership),
         'during',
-      );
-      mustSaveMembership = remote.data?.id !== linkedPeriod.id;
-    }
+      )?.data?.id ?? null;
+    return (period?.id ?? null) !== stored;
+  }
 
-    if (mustSaveMembership) {
-      await this.store.request(saveRecord(membership));
+  // The records and the labels their fields have in the notice.
+  fieldLabels() {
+    const labels = [];
+    for (const membership of this.memberships ?? []) {
+      if (membership.isDestroyed || membership.isDestroying) {
+        continue;
+      }
+      labels.push([membership, MEMBERSHIP_LABELS]);
+      const period = membership.during;
+      if (period) {
+        labels.push([period, PERIOD_LABELS]);
+      }
     }
+    return labels;
+  }
+
+  // Reload the route, then show the notice; the refresh resets this controller.
+  async showHeldRequest(heldRequest) {
+    try {
+      await this.router.refresh(
+        'organizations.organization.related-organizations',
+      );
+    } catch (error) {
+      reportHeldRequest(this.toaster, error, heldRequest.waiting);
+      return;
+    }
+    this.formRevision += 1;
+    this.heldRequest = heldRequest;
+    this.saveBlocked = heldRequest.reloadFailed;
   }
 
   reset() {
@@ -445,6 +541,10 @@ export default class OrganizationsOrganizationRelatedOrganizationsEditController
     this.membershipRemovalError = null;
     this.nonActiveMembership = null;
     this.nonActiveRelatedOrganization = null;
+    this.saveError = null;
+    this.saveBlocked = false;
+    this.heldRequest = null;
+    this.failedRequestId = null;
   }
 
   /**
