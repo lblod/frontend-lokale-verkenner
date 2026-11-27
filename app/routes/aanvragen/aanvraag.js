@@ -5,8 +5,7 @@ import { ChangeRequestError } from 'frontend-organization-portal/services/change
 
 /**
  * One change request: the document of the service with its steps, conflicts
- * and the operations it was submitted with, the requesting organisation and
- * the organisation it is about (when that one is registered).
+ * and the operations it was submitted with, and the requesting organisation.
  */
 export default class AanvragenAanvraagRoute extends Route {
   @service changeRequests;
@@ -26,27 +25,14 @@ export default class AanvragenAanvraagRoute extends Route {
     }
     const requesterId =
       request.relationships?.['requesting-organisation']?.data?.id ?? null;
-    const target = request.relationships?.target ?? null;
-    const classificationId = request.attributes['target-classification'];
-
-    const [requester, targetOrganization, classification] = await Promise.all([
-      requesterId ? this.loadRecord('organization', requesterId) : null,
-      isRegistered(target)
-        ? this.loadRecord('organization', target.data.id)
-        : null,
-      classificationId
-        ? this.loadRecord('organization-classification-code', classificationId)
-        : null,
-    ]);
+    const requester = requesterId
+      ? await this.loadRecord('organization', requesterId)
+      : null;
 
     return {
       request,
       requesterId,
       requester,
-      targetOrganization,
-      targetPending: target?.meta?.pending === true,
-      targetUnregistered: target?.meta?.registered === false,
-      classification,
       rights: this.modelFor('aanvragen'),
     };
   }
@@ -71,18 +57,4 @@ export default class AanvragenAanvraagRoute extends Route {
     super.resetController(...arguments);
     controller.reset();
   }
-}
-
-/**
- * Whether the organisation a request is about is registered: the service
- * says it is not (`meta.registered` false) for a creation whose organisation
- * waits or was never registered; an older service only said that one waits
- * (`meta.pending`).
- */
-export function isRegistered(target) {
-  return (
-    Boolean(target?.data?.id) &&
-    target.meta?.registered !== false &&
-    target.meta?.pending !== true
-  );
 }

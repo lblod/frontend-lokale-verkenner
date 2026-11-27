@@ -1,38 +1,46 @@
-<AuTable @size="small" data-test-history>
-  <:header>
-    <tr>
-      <th>Datum</th>
-      <th>Actie</th>
-      <th>Door</th>
-      <th>Details</th>
-      <th>Resulterende status</th>
-    </tr>
-  </:header>
-  <:body>
-    {{#each this.history as |entry|}}
-      <tr>
+{{page-title "Aanvraaggeschiedenis"}}
+{{breadcrumb "Aanvraaggeschiedenis"}}
+
+<PageHeader class="au-u-margin-bottom">
+  <:title>Aanvraaggeschiedenis</:title>
+</PageHeader>
+
+<div data-test-history>
+  <AuDataTable
+    @content={{this.history}}
+    @hidePagination={{true}}
+    @noDataMessage="Geen stappen"
+    as |t|
+  >
+    <t.content class="au-c-data-table__table--small" as |c|>
+      <c.header>
+        <th>Datum</th>
+        <th>Actie</th>
+        <th>Details</th>
+        <th>Resulterende status</th>
+      </c.header>
+      <c.body as |entry|>
         <td>{{date-time-format entry.step.at}}</td>
-        <td>{{change-request-step-label entry.step.type entry.step.status}}</td>
-        <td>{{entry.actor}}</td>
         <td>
-          {{#if entry.step.reason}}
-            {{entry.step.reason}}
-          {{else if entry.step.error}}
-            <span class="au-u-muted">{{entry.step.error}}</span>
-          {{else if entry.hiddenText}}
-            <span class="au-u-muted">
-              Enkel zichtbaar voor de aanvrager en ABB
-            </span>
+          {{change-request-step-label entry.step.type entry.step.status}}
+        </td>
+        <td class={{unless entry.step.reason "au-u-muted"}}>
+          {{#if entry.truncated}}
+            <AuTooltip as |tooltip|>
+              <span
+                {{tooltip.target}}
+                tabindex="0"
+              >{{entry.shortDetails}}</span>
+              <tooltip.Content>{{entry.details}}</tooltip.Content>
+            </AuTooltip>
+          {{else}}
+            {{entry.details}}
           {{/if}}
         </td>
         <td>
           <ChangeRequests::Status @status={{entry.step.status}} />
         </td>
-      </tr>
-    {{else}}
-      <tr>
-        <td colspan="5" class="au-u-muted">Geen stappen</td>
-      </tr>
-    {{/each}}
-  </:body>
-</AuTable>
+      </c.body>
+    </t.content>
+  </AuDataTable>
+</div>

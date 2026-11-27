@@ -112,7 +112,6 @@ Router.map(function () {
 
   this.route('aanvragen', function () {
     this.route('aanvraag', { path: '/:id' }, function () {
-      this.route('extra-informatie');
       this.route('geschiedenis');
     });
   });

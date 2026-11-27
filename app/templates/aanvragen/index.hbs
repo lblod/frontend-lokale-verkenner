@@ -18,13 +18,15 @@
             />
           </div>
           <div class="au-o-grid__item au-u-1-1">
-            <AuCheckbox
+            <AuToggleSwitch
+              @identifier="filter-mine"
+              @name="filter-mine"
               @checked={{this.mine}}
-              @onChange={{this.toggleMine}}
+              @onChange={{this.setMine}}
               data-test-filter-mine
             >
               Enkel mijn aanvragen tonen
-            </AuCheckbox>
+            </AuToggleSwitch>
           </div>
           <div class="au-o-grid__item au-u-1-1">
             <AuLabel for="filter-kind">Type aanvraag</AuLabel>
@@ -156,7 +158,10 @@
             </td>
             <td>
               {{#if row.requester}}
-                {{row.requester.abbName}}
+                <AuLink
+                  @route="organizations.organization"
+                  @model={{row.requesterId}}
+                >{{row.requester.abbName}}</AuLink>
               {{else}}
                 <span class="au-u-muted">Onbekend</span>
               {{/if}}
@@ -187,7 +192,7 @@
                 {{row.targetName}}
               {{/if}}
             </td>
-            <td>{{date-format row.created}}</td>
+            <td>{{date-request-format row.created}}</td>
             <td>
               <ChangeRequests::Status @status={{row.status}} />
             </td>

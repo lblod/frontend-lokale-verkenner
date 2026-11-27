@@ -1,0 +1,87 @@
+{{#if this.changeEvent}}
+  <DataCard @headingLevel="2" data-test-request-form-change-event>
+    <:title>Veranderingsgebeurtenis</:title>
+    <:card as |Card|>
+      <Card.Columns>
+        <:left as |Item|>
+          {{#each this.leftFields as |field|}}
+            <Item>
+              <:label>{{field.label}}</:label>
+              <:content>
+                <ChangeRequests::FieldValue
+                  @field={{field}}
+                  @operations={{@operations}}
+                />
+              </:content>
+            </Item>
+          {{/each}}
+        </:left>
+        <:right as |Item|>
+          {{#each this.rightFields as |field|}}
+            <Item>
+              <:label>{{field.label}}</:label>
+              <:content>
+                <ChangeRequests::FieldValue
+                  @field={{field}}
+                  @operations={{@operations}}
+                />
+              </:content>
+            </Item>
+          {{/each}}
+        </:right>
+      </Card.Columns>
+    </:card>
+  </DataCard>
+
+  {{#if this.isMultipleOrganizationEvent}}
+    <DataCard
+      @headingLevel="2"
+      data-test-request-form-change-event-organizations
+    >
+      <:title>Betrokken organisaties</:title>
+      <:card as |Card|>
+        <Card.Columns>
+          <:left as |Item|>
+            {{#each this.originalOrganizations as |reference|}}
+              <Item>
+                <:label>Betrokken organisatie</:label>
+                <:content>
+                  <ChangeRequests::ResourceReference
+                    @reference={{reference}}
+                    @operations={{@operations}}
+                  />
+                </:content>
+              </Item>
+            {{/each}}
+          </:left>
+          <:right as |Item|>
+            {{#if this.isMerger}}
+              {{#each this.resultingOrganizations as |reference|}}
+                <Item>
+                  <:label>Resulterende organisatie</:label>
+                  <:content>
+                    <ChangeRequests::ResourceReference
+                      @reference={{reference}}
+                      @operations={{@operations}}
+                    />
+                  </:content>
+                </Item>
+              {{/each}}
+              {{#if this.statusReference}}
+                <Item>
+                  <:label>Resulterende status</:label>
+                  <:content>
+                    <ChangeRequests::ResourceReference
+                      @reference={{this.statusReference}}
+                      @operations={{@operations}}
+                    />
+                  </:content>
+                </Item>
+              {{/if}}
+            {{/if}}
+          </:right>
+        </Card.Columns>
+      </:card>
+    </DataCard>
+  {{/if}}
+{{/if}}

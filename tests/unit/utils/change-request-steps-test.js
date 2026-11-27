@@ -1,76 +1,37 @@
 import { module, test } from 'qunit';
-import { stepsWithActors } from 'frontend-organization-portal/utils/change-request-steps';
+import { historyEntries } from 'frontend-organization-portal/utils/change-request-steps';
 
 module('Unit | Utility | change-request-steps', function () {
-  test('it names who took each step: the requesting organisation, ABB or the service, and flags a hidden text', function (assert) {
+  test('it gives each step its text, the hidden note and a short version for the cell', function (assert) {
+    const longReason = 'a'.repeat(70);
     const steps = [
-      {
-        sequence: 1,
-        type: 'indiening',
-        organisation: 'org-1',
-        agent: 'user',
-        reason: null,
-      },
-      {
-        sequence: 2,
-        type: 'informatievraag',
-        organisation: 'abb',
-        agent: 'user',
-        reason: null,
-      },
-      {
-        sequence: 3,
-        type: 'informatieantwoord',
-        organisation: 'org-1',
-        agent: 'user',
-        reason: 'Zie bijlage',
-      },
-      {
-        sequence: 4,
-        type: 'goedkeuring',
-        organisation: 'abb',
-        agent: 'user',
-        reason: null,
-      },
-      {
-        sequence: 5,
-        type: 'afhandeling',
-        organisation: null,
-        agent: 'service',
-        reason: null,
-        error: null,
-      },
+      { sequence: 1, type: 'indiening', reason: null },
+      { sequence: 2, type: 'informatievraag', reason: null },
+      { sequence: 3, type: 'informatieantwoord', reason: 'Zie bijlage' },
+      { sequence: 4, type: 'afkeuring', reason: longReason },
+      { sequence: 5, type: 'afhandeling', error: 'Virtuoso 42000 Error SR325' },
+      { sequence: 6, type: 'goedkeuring' },
     ];
-    const entries = stepsWithActors({
-      request: { attributes: { steps } },
-      requesterId: 'org-1',
-      requester: { id: 'org-1', abbName: 'Gemeente Aalst' },
-    });
+    const entries = historyEntries({ request: { attributes: { steps } } });
 
     assert.deepEqual(
-      entries.map(({ actor, hiddenText }) => [actor, hiddenText]),
+      entries.map(({ details }) => details),
       [
-        ['Gemeente Aalst', false],
-        ['ABB', true],
-        ['Gemeente Aalst', false],
-        ['ABB', false],
-        ['Automatisch', false],
+        '',
+        'Enkel zichtbaar voor de aanvrager en ABB',
+        'Zie bijlage',
+        longReason,
+        'Virtuoso 42000 Error SR325',
+        '',
       ],
     );
+    assert.false(entries[0].truncated);
+    assert.true(entries[3].truncated);
+    assert.strictEqual(entries[3].shortDetails, `${'a'.repeat(60)}…`);
     assert.strictEqual(entries[2].step, steps[2], 'the step itself is kept');
   });
 
-  test('it falls back to "de aanvrager" when the organisation could not be loaded', function (assert) {
-    const entries = stepsWithActors({
-      request: {
-        attributes: {
-          steps: [{ type: 'indiening', organisation: 'org-1', agent: 'user' }],
-        },
-      },
-      requesterId: 'org-1',
-      requester: null,
-    });
-
-    assert.strictEqual(entries[0].actor, 'de aanvrager');
+  test('it handles a request without steps', function (assert) {
+    assert.deepEqual(historyEntries({ request: null }), []);
   });
 });
