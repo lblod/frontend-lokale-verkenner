@@ -36,8 +36,9 @@ export default class ChangeRequestsResourceReferenceComponent extends Component 
    */
   get ownOperation() {
     const { reference, operations } = this.args;
+    const key = reference?.id ?? reference?.lid;
     return (operations ?? []).find(
-      (operation) => operation?.data?.id === reference?.id,
+      (operation) => (operation?.data?.id ?? operation?.data?.lid) === key,
     );
   }
 

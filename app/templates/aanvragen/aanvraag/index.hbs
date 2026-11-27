@@ -1,16 +1,10 @@
-<div class="au-o-flow">
-  {{#let (get @model.request.attributes.steps 0) as |submission|}}
-    {{#if submission.reason}}
-      <AuPanel class="au-u-padding" data-test-submission-reason>
-        <AuHeading @level="3" @skin="5" class="au-u-margin-bottom-small">
-          Toelichting van de aanvrager
-        </AuHeading>
-        <p>{{submission.reason}}</p>
-      </AuPanel>
-    {{/if}}
-  {{/let}}
+{{breadcrumb "Aanvraagformulier"}}
 
-  <ChangeRequests::Operations
+<div class="au-o-flow au-o-flow--large">
+  <ChangeRequests::RequestForm
+    @operations={{@model.request.attributes.operations}}
+  />
+  <ChangeRequests::ChangeEvent
     @operations={{@model.request.attributes.operations}}
   />
 </div>

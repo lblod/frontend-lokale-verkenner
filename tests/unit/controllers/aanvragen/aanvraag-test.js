@@ -24,11 +24,19 @@ module('Unit | Controller | aanvragen/aanvraag', function (hooks) {
     canDecide = false,
     conflicts = [],
     kind = 'creation',
+    targetName = 'Organisatie 1',
   }) {
     return {
       request: {
         id: 'cr-1',
-        attributes: { status, steps, conflicts, kind, mine: false },
+        attributes: {
+          status,
+          steps,
+          conflicts,
+          kind,
+          mine: false,
+          'target-name': targetName,
+        },
         relationships: {
           'requesting-organisation': {
             data: { type: 'organizations', id: REQUESTER },
@@ -147,6 +155,25 @@ module('Unit | Controller | aanvragen/aanvraag', function (hooks) {
     });
     assert.false(controller.canApprove);
     assert.false(controller.canAskInformation);
+  });
+
+  test('the menu names the request, and the breadcrumb says "Aanvraag <name>"', function (assert) {
+    const { controller, session } = this;
+    actsFor(controller, session, OTHER);
+    controller.model = model({ status: 'ingediend', kind: 'creation' });
+    assert.strictEqual(controller.requestName, 'Organisatie 1');
+    assert.strictEqual(controller.crumb, 'Aanvraag Organisatie 1');
+
+    controller.model = model({
+      status: 'ingediend',
+      kind: 'creation',
+      targetName: null,
+    });
+    assert.strictEqual(controller.requestName, 'Nieuwe organisatie');
+    assert.strictEqual(controller.crumb, 'Aanvraag', 'no doubled word');
+
+    controller.model = { error: new ChangeRequestError('weg'), rights: {} };
+    assert.strictEqual(controller.crumb, 'Aanvraag', 'nor without a request');
   });
 
   test('a request that could not be loaded shows its message without actions', function (assert) {

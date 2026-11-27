@@ -51,25 +51,40 @@
         </AuAlert>
       {{/if}}
 
-      {{#if this.config.textLabel}}
+      {{#if this.textLabel}}
         <div>
           <AuLabel
             for="step-text"
             @required={{true}}
             @requiredLabel="Verplicht"
             @error={{this.textError}}
+            data-test-step-label
           >
-            {{this.config.textLabel}}
+            {{this.textLabel}}
           </AuLabel>
-          <AuTextarea
-            id="step-text"
-            @width="block"
-            @error={{this.textError}}
-            value={{this.text}}
-            rows="5"
-            data-test-step-text
-            {{on "input" this.updateText}}
-          />
+          {{#if this.config.textHelp}}
+            <AuHelpText>{{this.config.textHelp}}</AuHelpText>
+          {{/if}}
+          {{#if this.config.singleLine}}
+            <AuInput
+              id="step-text"
+              @width="block"
+              @error={{this.textError}}
+              value={{this.text}}
+              data-test-step-text
+              {{on "input" this.updateText}}
+            />
+          {{else}}
+            <AuTextarea
+              id="step-text"
+              @width="block"
+              @error={{this.textError}}
+              value={{this.text}}
+              rows="5"
+              data-test-step-text
+              {{on "input" this.updateText}}
+            />
+          {{/if}}
           {{#if this.textError}}
             <AuHelpText @error={{true}}>{{this.textError}}</AuHelpText>
           {{/if}}
@@ -93,7 +108,6 @@
       <Group>
         <AuButton
           @skin="secondary"
-          @disabled={{this.submit.isRunning}}
           data-test-step-cancel
           {{on "click" @onClose}}
         >

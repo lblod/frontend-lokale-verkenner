@@ -286,7 +286,7 @@ module('Acceptance | goedkeuring over gewijzigde gegevens', function (hooks) {
 
     await visit(`/aanvragen/${REQUEST_ID}`);
 
-    assert.dom('[data-test-request-status]').hasText('Ingediend');
+    assert.dom('[data-test-request-status]').hasText('In behandeling');
     assert
       .dom('[data-test-banner="conflicts"]')
       .exists('the page warns that the data changed');
@@ -361,7 +361,7 @@ module('Acceptance | goedkeuring over gewijzigde gegevens', function (hooks) {
       );
     assert
       .dom('[data-test-request-status]')
-      .hasText('Ingediend', 'nothing is applied');
+      .hasText('In behandeling', 'nothing is applied');
 
     await click('[data-test-step-confirm]');
 
@@ -416,7 +416,7 @@ module('Acceptance | goedkeuring over gewijzigde gegevens', function (hooks) {
     assert
       .dom('[data-test-step-override]')
       .isNotChecked('the confirmation is asked anew');
-    assert.dom('[data-test-request-status]').hasText('Ingediend');
+    assert.dom('[data-test-request-status]').hasText('In behandeling');
 
     await click('[data-test-step-override]');
     await click('[data-test-step-confirm]');

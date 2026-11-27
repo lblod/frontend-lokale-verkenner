@@ -15,8 +15,12 @@ module('Integration | Component | change-requests/status', function (hooks) {
     assert.dom('.au-c-pill').hasClass('au-c-pill--error');
 
     this.set('status', 'informatie-gevraagd');
-    assert.dom('.au-c-pill').hasText('Informatie gevraagd');
+    assert.dom('.au-c-pill').hasText('Aanvulling gevraagd');
     assert.dom('.au-c-pill').hasClass('au-c-pill--warning');
+
+    this.set('status', 'ingediend');
+    assert.dom('.au-c-pill').hasText('In behandeling');
+    assert.dom('.au-c-pill').hasClass('au-c-pill--link');
   });
 
   test('it shows an unknown status as it is', async function (assert) {

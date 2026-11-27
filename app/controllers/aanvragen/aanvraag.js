@@ -7,7 +7,6 @@ import {
   KIND_LABELS,
   PENDING_STATUSES,
   STATUS,
-  STATUS_DESCRIPTIONS,
   STEP,
 } from 'frontend-organization-portal/constants/change-requests';
 
@@ -41,8 +40,26 @@ export default class AanvragenAanvraagController extends Controller {
     return this.request?.attributes ?? {};
   }
 
+  /** The kind label, as the document title shows it. */
   get title() {
     return KIND_LABELS[this.attributes.kind] ?? 'Aanvraag';
+  }
+
+  /** The name the request gives the organisation, for the left menu. */
+  get requestName() {
+    return this.attributes['target-name'] ?? this.title;
+  }
+
+  /** "Aanvraag <name>" in the breadcrumb. */
+  get crumb() {
+    return this.attributes['target-name']
+      ? `Aanvraag ${this.attributes['target-name']}`
+      : 'Aanvraag';
+  }
+
+  /** Whether the form tab is open, rather than the history. */
+  get isFormPage() {
+    return this.router.currentRouteName === 'aanvragen.aanvraag.index';
   }
 
   /**
@@ -54,10 +71,6 @@ export default class AanvragenAanvraagController extends Controller {
 
   get status() {
     return this.attributes.status;
-  }
-
-  get statusDescription() {
-    return STATUS_DESCRIPTIONS[this.status] ?? '';
   }
 
   get isPending() {
@@ -134,6 +147,18 @@ export default class AanvragenAanvraagController extends Controller {
       this.canAnswer ||
       this.canContest ||
       this.canWithdraw
+    );
+  }
+
+  /** Whether any banner shows above the sections. */
+  get hasBanners() {
+    return Boolean(
+      this.openQuestion ||
+      this.freshAnswer ||
+      this.freshContest ||
+      this.rejection ||
+      this.attributes.error ||
+      (this.decides && this.isPending && this.conflicts.length),
     );
   }
 

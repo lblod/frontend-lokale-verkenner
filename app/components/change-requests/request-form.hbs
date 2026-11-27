@@ -1,0 +1,73 @@
+<div class="au-o-flow au-o-flow--large" ...attributes>
+  {{#if this.organization}}
+    <DataCard @headingLevel="2" data-test-request-form-organization>
+      <:title>Organisatie</:title>
+      <:card as |Card|>
+        <Card.Columns>
+          <:left as |Item|>
+            {{#each this.organizationColumns.left as |field|}}
+              <Item>
+                <:label>{{field.label}}</:label>
+                <:content>
+                  <ChangeRequests::FieldValue
+                    @field={{field}}
+                    @operations={{@operations}}
+                  />
+                </:content>
+              </Item>
+            {{/each}}
+          </:left>
+          <:right as |Item|>
+            {{#each this.organizationColumns.right as |field|}}
+              <Item>
+                <:label>{{field.label}}</:label>
+                <:content>
+                  <ChangeRequests::FieldValue
+                    @field={{field}}
+                    @operations={{@operations}}
+                  />
+                </:content>
+              </Item>
+            {{/each}}
+          </:right>
+        </Card.Columns>
+      </:card>
+    </DataCard>
+  {{/if}}
+
+  {{#if (or this.address this.contacts)}}
+    <DataCard @headingLevel="2" data-test-request-form-contacts>
+      <:title>Primaire contact gegevens</:title>
+      <:card as |Card|>
+        <Card.Columns>
+          <:left as |Item|>
+            {{#each this.address as |field|}}
+              <Item>
+                <:label>{{field.label}}</:label>
+                <:content>
+                  <ChangeRequests::FieldValue
+                    @field={{field}}
+                    @operations={{@operations}}
+                  />
+                </:content>
+              </Item>
+            {{/each}}
+          </:left>
+          <:right as |Item|>
+            {{#each this.contacts as |field|}}
+              <Item>
+                <:label>{{field.label}}</:label>
+                <:content>
+                  <ChangeRequests::FieldValue
+                    @field={{field}}
+                    @operations={{@operations}}
+                  />
+                </:content>
+              </Item>
+            {{/each}}
+          </:right>
+        </Card.Columns>
+      </:card>
+    </DataCard>
+  {{/if}}
+</div>

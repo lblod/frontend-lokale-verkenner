@@ -10,6 +10,7 @@ const TEMPLATE = hbs`
   <ChangeRequests::StepModal
     @step={{this.step}}
     @request={{this.request}}
+    @question={{this.question}}
     @onClose={{this.onClose}}
     @onDone={{this.onDone}}
     @onApplyFailed={{this.onApplyFailed}}
@@ -255,12 +256,67 @@ module(
       assert.true(this.onDone.notCalled);
     });
 
-    test('the decision modals promise no notification nothing sends', async function (assert) {
-      for (const step of ['goedkeuring', 'afkeuring']) {
-        this.set('step', step);
-        await render(TEMPLATE);
-        assert.dom(this.element).doesNotIncludeText('melding');
-      }
+    test('the decision modals ask for confirmation in the words of the design', async function (assert) {
+      this.step = 'goedkeuring';
+      await render(TEMPLATE);
+      assert.dom(this.element).includesText('Aanvraag goedkeuren?');
+      assert
+        .dom(this.element)
+        .includesText(
+          'Ben je zeker dat je deze aanvraag wilt goedkeuren? De aanvrager krijgt hiervan een melding.',
+        );
+      assert.dom('[data-test-step-text]').doesNotExist('no text asked');
+
+      this.set('step', 'afkeuring');
+      await render(TEMPLATE);
+      assert.dom(this.element).includesText('Aanvraag afkeuren?');
+      assert
+        .dom(this.element)
+        .includesText(
+          'Ben je zeker dat je deze aanvraag wilt afkeuren? De aanvrager krijgt hiervan een melding',
+        );
+      assert.dom('[data-test-step-text]').hasTagName('input', 'a single line');
+
+      this.set('step', 'informatievraag');
+      await render(TEMPLATE);
+      assert.dom(this.element).includesText('Extra informatie opvragen');
+      assert.dom(this.element).includesText('Jouw vraag aan de aanvrager');
+      assert.dom('[data-test-step-confirm]').hasText('Verzenden');
+
+      this.question = 'Welk besluit?';
+      this.set('step', 'informatieantwoord');
+      await render(TEMPLATE);
+      assert.dom('[data-test-step-label]').includesText('Welk besluit?');
+      assert.dom('[data-test-step-confirm]').hasText('Verzenden');
+
+      this.set('step', 'betwisting');
+      await render(TEMPLATE);
+      assert
+        .dom(this.element)
+        .includesText('Waarom ben je het niet eens met de beslissing?');
+      assert
+        .dom(this.element)
+        .includesText(
+          'Leg uit waarom je vindt dat de aanvraag toch goedgekeurd moet worden. Wees zo grondig mogelijk.',
+        );
+      assert.dom('[data-test-step-confirm]').hasText('Verzenden');
+    });
+
+    test('cancelling closes the modal, also while the step runs', async function (assert) {
+      this.step = 'intrekking';
+      this.takeDecision.callsFake(() => new Promise(() => {}));
+
+      await render(TEMPLATE);
+      await click('[data-test-step-confirm]');
+
+      assert.false(
+        this.element
+          .querySelector('[data-test-step-cancel]')
+          .hasAttribute('disabled'),
+      );
+      await click('[data-test-step-cancel]');
+
+      assert.true(this.onClose.calledOnce);
     });
   },
 );

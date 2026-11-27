@@ -221,9 +221,9 @@ export default class AanvragenIndexController extends Controller {
   }
 
   @action
-  toggleMine() {
+  setMine(onlyMine) {
     this.page = null;
-    this.mine = !this.mine;
+    this.mine = onlyMine;
   }
 
   @action

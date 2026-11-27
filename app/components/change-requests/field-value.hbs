@@ -1,0 +1,38 @@
+{{#if (eq @field.kind "rich-text")}}
+  <AuContent @skin="tiny" class="rich-text-editor-content" data-test-rich-text>
+    {{rich-text @field.value}}
+  </AuContent>
+{{else if (eq @field.kind "reference")}}
+  <ChangeRequests::ResourceReference
+    @reference={{@field.value}}
+    @operations={{@operations}}
+  />
+{{else if (eq @field.kind "references")}}
+  <AuList as |Item|>
+    {{#each @field.value as |reference|}}
+      <Item>
+        <ChangeRequests::ResourceReference
+          @reference={{reference}}
+          @operations={{@operations}}
+        />
+      </Item>
+    {{/each}}
+  </AuList>
+{{else if (eq @field.kind "links")}}
+  <AuList as |Item|>
+    {{#each @field.value as |link|}}
+      <Item>
+        <AuLinkExternal href={{link}}>{{link}}</AuLinkExternal>
+      </Item>
+    {{/each}}
+  </AuList>
+{{else if (eq @field.kind "tel")}}
+  {{tel-format @field.value}}
+{{else if (eq @field.kind "link")}}
+  <AuLinkExternal href={{@field.value}}>
+    {{@field.value}}
+    (externe link)
+  </AuLinkExternal>
+{{else}}
+  {{@field.value}}
+{{/if}}

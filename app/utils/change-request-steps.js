@@ -1,35 +1,37 @@
 import { CONVERSATION_STEPS } from 'frontend-organization-portal/constants/change-requests';
 
+/** How much of a step's text the history cell shows before the tooltip. */
+const SHORT_DETAILS_LENGTH = 60;
+
 /**
- * The steps of a request with who took each one, as the pages show them:
- * the requesting organisation by name, ABB, or the service ("automatisch").
- * The service shows the person who took a step to the requesting
- * organisation and ABB only, and never names one on these pages: the
- * organisation is what matters.
+ * The steps of a request as the history table shows them: the step itself
+ * and its text. A step whose text the service kept from the viewer gets the
+ * note that says so. `shortDetails` is the text cut for the cell; `truncated`
+ * tells whether the full text is longer and belongs in the tooltip.
  *
- * @param {Object} model - the model of the request page: `request`,
- *     `requesterId`, `requester`
- * @returns {Array<{ step: Object, actor: string, hiddenText: boolean }>}
- *     `hiddenText` is set for a step whose text the service kept from the
- *     viewer
+ * @param {Object} model - the model of the request page: `request`
+ * @returns {Array<{ step: Object, details: string, shortDetails: string, truncated: boolean }>}
  */
-export function stepsWithActors({ request, requesterId, requester }) {
+export function historyEntries({ request }) {
   const steps = request?.attributes?.steps ?? [];
-  const requesterName = requester?.abbName ?? requester?.name ?? 'de aanvrager';
-  return steps.map((step) => ({
-    step,
-    actor: actorOf(step, requesterId, requesterName),
-    hiddenText:
-      CONVERSATION_STEPS.includes(step.type) && !step.reason && !step.error,
-  }));
+  return steps.map((step) => {
+    const details =
+      step.reason ||
+      step.error ||
+      (CONVERSATION_STEPS.includes(step.type)
+        ? 'Enkel zichtbaar voor de aanvrager en ABB'
+        : '');
+    return {
+      step,
+      details,
+      shortDetails: shorten(details),
+      truncated: details.length > SHORT_DETAILS_LENGTH,
+    };
+  });
 }
 
-function actorOf(step, requesterId, requesterName) {
-  if (step.agent === 'service') {
-    return 'Automatisch';
-  }
-  if (step.organisation && step.organisation === requesterId) {
-    return requesterName;
-  }
-  return 'ABB';
+function shorten(text) {
+  return text.length > SHORT_DETAILS_LENGTH
+    ? `${text.slice(0, SHORT_DETAILS_LENGTH).trimEnd()}…`
+    : text;
 }

@@ -9,13 +9,12 @@ import {
   fieldLabel,
 } from 'frontend-organization-portal/constants/change-requests';
 
-/**
- * What each step asks of the user, as the designs word it.
- */
+/** What each step asks of the user, in the design's words. */
 const STEPS = {
   [STEP.APPROVAL]: {
-    title: 'Aanvraag goedkeuren',
-    intro: 'De gegevens van de aanvraag worden doorgevoerd in het register.',
+    title: 'Aanvraag goedkeuren?',
+    intro:
+      'Ben je zeker dat je deze aanvraag wilt goedkeuren? De aanvrager krijgt hiervan een melding.',
     textLabel: null,
     confirmLabel: 'Goedkeuren',
     loadingLabel: 'Aanvraag goedkeuren',
@@ -23,44 +22,44 @@ const STEPS = {
     done: 'De aanvraag is goedgekeurd en doorgevoerd.',
   },
   [STEP.REJECTION]: {
-    title: 'Aanvraag afkeuren',
+    title: 'Aanvraag afkeuren?',
     intro:
-      'De aanvrager ziet de reden van de afkeuring en kan de beslissing betwisten.',
+      'Ben je zeker dat je deze aanvraag wilt afkeuren? De aanvrager krijgt hiervan een melding',
     textLabel: 'Reden van afkeuring',
     textError: 'Geef de reden van de afkeuring.',
+    singleLine: true,
     confirmLabel: 'Afkeuren',
     loadingLabel: 'Aanvraag afkeuren',
     alert: true,
     done: 'De aanvraag is afgekeurd.',
   },
   [STEP.INFORMATION_REQUEST]: {
-    title: 'Meer informatie opvragen',
+    title: 'Extra informatie opvragen',
     intro:
-      'De aanvrager krijgt je vraag te zien en kan ze beantwoorden. De aanvraag wacht intussen.',
-    textLabel: 'Welke informatie heb je nodig?',
+      'Welke informatie ontbreekt er nog? De aanvrager ontvangt je bericht en kan de aanvraag daarna aanvullen.',
+    textLabel: 'Jouw vraag aan de aanvrager',
     textError: 'Formuleer je vraag.',
-    confirmLabel: 'Informatie opvragen',
+    confirmLabel: 'Verzenden',
     loadingLabel: 'Vraag versturen',
     alert: false,
     done: 'Je vraag is verstuurd naar de aanvrager.',
   },
   [STEP.INFORMATION_ANSWER]: {
     title: 'Beantwoord de aanvullende vraag',
-    intro: 'Je antwoord gaat naar ABB; de aanvraag wordt opnieuw gevalideerd.',
-    textLabel: 'Je antwoord',
+    textLabel: 'Aanvullende vraag',
     textError: 'Vul je antwoord in.',
-    confirmLabel: 'Antwoord versturen',
+    confirmLabel: 'Verzenden',
     loadingLabel: 'Antwoord versturen',
     alert: false,
     done: 'Je antwoord is verstuurd. De aanvraag wordt opnieuw gevalideerd.',
   },
   [STEP.CONTEST]: {
     title: 'Beslissing betwisten',
-    intro:
-      'Leg uit waarom je niet akkoord gaat met de afkeuring. ABB bekijkt de aanvraag opnieuw.',
-    textLabel: 'Waarom betwist je de beslissing?',
+    textLabel: 'Waarom ben je het niet eens met de beslissing?',
+    textHelp:
+      'Leg uit waarom je vindt dat de aanvraag toch goedgekeurd moet worden. Wees zo grondig mogelijk.',
     textError: 'Leg uit waarom je de beslissing betwist.',
-    confirmLabel: 'Betwisten',
+    confirmLabel: 'Verzenden',
     loadingLabel: 'Betwisting versturen',
     alert: false,
     done: 'Je betwisting is verstuurd. De aanvraag wordt opnieuw gevalideerd.',
@@ -87,6 +86,7 @@ const STEPS = {
  * - `@step`: the step type (`STEP` of the constants)
  * - `@request`: the JSON:API document of the request (with its `conflicts`
  *   and `conflicts-token`, for a goedkeuring over changed data)
+ * - `@question`: the question of ABB, for the requester's answer
  * - `@onClose`: called when the user cancels
  * - `@onDone`: called with the updated request document and the message
  *   for the user once the step is taken
@@ -115,6 +115,17 @@ export default class ChangeRequestsStepModalComponent extends Component {
 
   get isApproval() {
     return this.args.step === STEP.APPROVAL;
+  }
+
+  /**
+   * The label above the text field: the question of ABB when the requester
+   * answers it, the config's label otherwise.
+   */
+  get textLabel() {
+    if (this.args.step === STEP.INFORMATION_ANSWER) {
+      return this.args.question || this.config.textLabel;
+    }
+    return this.config.textLabel;
   }
 
   get conflicts() {

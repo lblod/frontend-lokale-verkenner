@@ -15,13 +15,10 @@ export const STATUS = {
   FAILED: 'mislukt',
 };
 
-/**
- * One word per status where the designs ask for it ("Ingediend" rather than
- * "Aanvraag wordt gevalideerd"); the longer wording is the description.
- */
+/** Pill labels per status, as frame A words them. */
 export const STATUS_LABELS = {
-  [STATUS.SUBMITTED]: 'Ingediend',
-  [STATUS.INFORMATION_REQUESTED]: 'Informatie gevraagd',
+  [STATUS.SUBMITTED]: 'In behandeling',
+  [STATUS.INFORMATION_REQUESTED]: 'Aanvulling gevraagd',
   [STATUS.APPROVED]: 'Goedgekeurd',
   [STATUS.APPLIED]: 'Afgehandeld',
   [STATUS.REJECTED]: 'Afgekeurd',
@@ -29,22 +26,11 @@ export const STATUS_LABELS = {
   [STATUS.FAILED]: 'Mislukt',
 };
 
-export const STATUS_DESCRIPTIONS = {
-  [STATUS.SUBMITTED]: 'De aanvraag wordt gevalideerd door ABB.',
-  [STATUS.INFORMATION_REQUESTED]:
-    'ABB wacht op aanvullende informatie van de aanvrager.',
-  [STATUS.APPROVED]: 'De aanvraag is goedgekeurd en wordt verwerkt.',
-  [STATUS.APPLIED]: 'De gegevens zijn aangepast in het register.',
-  [STATUS.REJECTED]: 'De aanvraag is afgekeurd.',
-  [STATUS.WITHDRAWN]: 'De aanvraag is ingetrokken.',
-  [STATUS.FAILED]: 'Het doorvoeren van de aanvraag mislukte.',
-};
-
 /**
  * The AuPill skin per status.
  */
 export const STATUS_SKINS = {
-  [STATUS.SUBMITTED]: 'border',
+  [STATUS.SUBMITTED]: 'link',
   [STATUS.INFORMATION_REQUESTED]: 'warning',
   [STATUS.APPROVED]: 'success',
   [STATUS.APPLIED]: 'success',
@@ -98,12 +84,13 @@ export const STEP = {
  */
 export const STEP_LABELS = {
   [STEP.SUBMISSION]: 'Aanvraag ingediend',
-  [STEP.INFORMATION_REQUEST]: 'Aanvullende informatie gevraagd',
-  [STEP.INFORMATION_ANSWER]: 'Aanvullende informatie bezorgd',
-  [STEP.APPROVAL]: 'Goedgekeurd',
-  [STEP.HANDLING]: 'Gegevens aangepast in het register',
-  [STEP.REJECTION]: 'Afgekeurd',
-  [STEP.CONTEST]: 'Beslissing betwist',
+  [STEP.INFORMATION_REQUEST]: 'ABB vraagt aanvullende informatie op',
+  [STEP.INFORMATION_ANSWER]: 'Aanvrager zend aanvullende informatie in',
+  [STEP.APPROVAL]: 'Aanvraag is goedgekeurd en wordt verwerkt',
+  [STEP.HANDLING]:
+    'Aanvraag is afgehandeld, gegevens zijn aangepast in het register',
+  [STEP.REJECTION]: 'Aanvraag is afgekeurd',
+  [STEP.CONTEST]: 'Beslissing wordt betwist',
   [STEP.WITHDRAWAL]: 'Aanvraag ingetrokken',
   [STEP.REAPPLY]: 'Opnieuw toegepast',
 };
@@ -130,7 +117,8 @@ export function stepLabel(type, status) {
 }
 
 /**
- * The steps whose text the "Extra informatie" tab shows as a conversation.
+ * Steps whose text the service withholds from everyone but the requester and
+ * ABB.
  */
 export const CONVERSATION_STEPS = [
   STEP.INFORMATION_REQUEST,
@@ -138,12 +126,6 @@ export const CONVERSATION_STEPS = [
   STEP.REJECTION,
   STEP.CONTEST,
 ];
-
-export const OPERATION_LABELS = {
-  create: 'Nieuw',
-  update: 'Gewijzigd',
-  delete: 'Verwijderd',
-};
 
 const ORGANIZATION_TYPES = [
   'organizations',
